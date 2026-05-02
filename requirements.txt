@@ -1,0 +1,11 @@
+kafka-python==2.0.2
+psycopg2-binary
+python-dotenv
+requests
+pandas
+boto3
+dbt-postgres
+fastapi
+uvicorn
+python-multipart
+yfinance
