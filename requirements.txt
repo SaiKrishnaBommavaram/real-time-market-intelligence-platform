@@ -9,3 +9,7 @@ fastapi
 uvicorn
 python-multipart
 yfinance
+newspaper3k
+vaderSentiment
+transformers
+torch

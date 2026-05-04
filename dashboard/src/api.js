@@ -12,7 +12,19 @@ export async function fetchMarketSummary() {
   return response.data;
 }
 
-export async function fetchStockSummary(ticker) {
-  const response = await axios.get(`${API_BASE_URL}/stocks/${ticker}/summary`);
+export async function fetchLiveStock(ticker) {
+  const response = await axios.get(`${API_BASE_URL}/stocks/${ticker}/live`);
+  return response.data;
+}
+
+export async function fetchStockNews(ticker) {
+  const response = await axios.get(`${API_BASE_URL}/stocks/${ticker}/news`);
+  return response.data;
+}
+
+export async function fetchStockNewsSummary(ticker) {
+  const response = await axios.get(
+    `${API_BASE_URL}/stocks/${ticker}/news/summary`,
+  );
   return response.data;
 }
