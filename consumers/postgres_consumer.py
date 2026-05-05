@@ -1,19 +1,23 @@
 import json
+import os
 
 import psycopg2
+from dotenv import load_dotenv
 from kafka import KafkaConsumer
 
 
-TOPIC_NAME = "stock_prices"
+load_dotenv()
+
+TOPIC_NAME = os.getenv("MARKET_KAFKA_TOPIC", "stock_prices")
 
 
 def get_db_connection():
     return psycopg2.connect(
-        host="localhost",
-        port=5432,
-        database="market_data",
-        user="postgres",
-        password="postgres",
+        host=os.getenv("MARKET_DB_HOST", "localhost"),
+        port=int(os.getenv("MARKET_DB_PORT", "55432")),
+        database=os.getenv("MARKET_DB_NAME", "market_data"),
+        user=os.getenv("MARKET_DB_USER", "postgres"),
+        password=os.getenv("MARKET_DB_PASSWORD", "postgres"),
     )
 
 
@@ -43,7 +47,7 @@ def create_table():
 def create_consumer():
     return KafkaConsumer(
         TOPIC_NAME,
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers=os.getenv("MARKET_KAFKA_BOOTSTRAP_SERVERS", "localhost:59092"),
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id="stock_price_postgres_consumer",

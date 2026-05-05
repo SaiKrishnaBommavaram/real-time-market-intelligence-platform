@@ -373,6 +373,29 @@ def build_fallback_summary(ticker: str, articles, reason: str | None = None):
     }
 
 
+def normalize_generated_summary(text: str):
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    return normalized
+
+
+def is_low_quality_summary(ticker: str, summary_text: str):
+    normalized = normalize_generated_summary(summary_text)
+
+    if not normalized:
+        return True
+
+    disallowed_fragments = [
+        f"{ticker} market news digest",
+        "Write a concise market-facing summary",
+        "Primary headlines:",
+        "Condensed article notes:",
+        "Headline:",
+        "Article:",
+    ]
+
+    return any(fragment.lower() in normalized.lower() for fragment in disallowed_fragments)
+
+
 def get_summarizer_components():
     global _summarizer_tokenizer, _summarizer_model, _summarizer_load_error
 
@@ -399,8 +422,9 @@ def summarize_text(text: str, max_length: int, min_length: int):
 
     try:
         tokenizer, model = get_summarizer_components()
+        prompt = f"summarize: {text.strip()}"
         inputs = tokenizer(
-            text,
+            prompt,
             max_length=LOCAL_SUMMARIZER_INPUT_MAX_TOKENS,
             truncation=True,
             return_tensors="pt",
@@ -414,10 +438,12 @@ def summarize_text(text: str, max_length: int, min_length: int):
             no_repeat_ngram_size=3,
             length_penalty=1.1,
         )
-        return tokenizer.decode(
+        return normalize_generated_summary(
+            tokenizer.decode(
             summary_tokens[0],
             skip_special_tokens=True,
-        ).strip()
+            )
+        )
     except Exception:
         raise
 
@@ -436,11 +462,11 @@ def build_market_summary_input(ticker: str, article_notes: list, enriched_articl
         if article.get("title")
     )
     return (
-        f"{ticker} market news digest. Overall article sentiment is {sentiment_label}. "
-        "Write a concise market-facing summary covering the main drivers, key risks, "
-        "and whether the coverage is broadly aligned or mixed.\n"
-        f"Primary headlines:\n{titles_block}\n"
-        f"Condensed article notes:\n{notes_block}"
+        f"Ticker: {ticker}\n"
+        f"Overall sentiment: {sentiment_label}\n"
+        f"Top headlines:\n{titles_block}\n"
+        f"Article summaries:\n{notes_block}\n"
+        "Summarize the main drivers, risks, and overall direction in 2-3 sentences."
     )
 
 
@@ -492,6 +518,13 @@ def summarize_news_with_local_model(ticker: str, articles):
                 ticker,
                 articles,
                 "Local summarizer returned an empty final summary",
+            )
+
+        if is_low_quality_summary(ticker, summary_text):
+            return build_fallback_summary(
+                ticker,
+                articles,
+                "Local summarizer echoed the prompt instead of generating a summary",
             )
 
         return {
@@ -708,7 +741,11 @@ def get_stock_news_summary(ticker: str):
 
     try:
         cached_row = get_daily_stock_search_cache(ticker)
-        if cached_row and cached_row.get("news_summary"):
+        if (
+            cached_row
+            and cached_row.get("news_summary")
+            and not is_low_quality_summary(ticker, cached_row["news_summary"])
+        ):
             return build_cached_news_summary_response(ticker, cached_row)
 
         if cached_row and cached_row.get("news_articles"):

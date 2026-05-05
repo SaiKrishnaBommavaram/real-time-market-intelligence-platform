@@ -1,18 +1,22 @@
 import json
+import os
 from datetime import datetime, timezone
 
 import boto3
+from dotenv import load_dotenv
 from kafka import KafkaConsumer
 
 
-TOPIC_NAME = "stock_prices"
-BUCKET_NAME = "market-data-lake"
+load_dotenv()
+
+TOPIC_NAME = os.getenv("MARKET_KAFKA_TOPIC", "stock_prices")
+BUCKET_NAME = os.getenv("MARKET_S3_BUCKET", "market-data-lake")
 
 
 def create_consumer():
     return KafkaConsumer(
         TOPIC_NAME,
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers=os.getenv("MARKET_KAFKA_BOOTSTRAP_SERVERS", "localhost:59092"),
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id="stock_price_s3_consumer",
@@ -23,10 +27,10 @@ def create_consumer():
 def create_s3_client():
     return boto3.client(
         "s3",
-        endpoint_url="http://localhost:9000",
-        aws_access_key_id="minioadmin",
-        aws_secret_access_key="minioadmin",
-        region_name="us-east-1",
+        endpoint_url=os.getenv("MARKET_S3_ENDPOINT_URL", "http://localhost:59000"),
+        aws_access_key_id=os.getenv("MARKET_MINIO_ROOT_USER", "minioadmin"),
+        aws_secret_access_key=os.getenv("MARKET_MINIO_ROOT_PASSWORD", "minioadmin"),
+        region_name=os.getenv("MARKET_S3_REGION", "us-east-1"),
     )
 
 

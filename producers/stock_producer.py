@@ -1,18 +1,25 @@
 import json
+import os
 import time
 from datetime import datetime, timezone
 
 import yfinance as yf
+from dotenv import load_dotenv
 from kafka import KafkaProducer
 
 
-TOPIC_NAME = "stock_prices"
-TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+load_dotenv()
+
+TOPIC_NAME = os.getenv("MARKET_KAFKA_TOPIC", "stock_prices")
+TICKERS = [ticker.strip() for ticker in os.getenv(
+    "MARKET_TICKERS",
+    "AAPL,MSFT,GOOGL,AMZN,NVDA",
+).split(",") if ticker.strip()]
 
 
 def create_producer():
     return KafkaProducer(
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers=os.getenv("MARKET_KAFKA_BOOTSTRAP_SERVERS", "localhost:59092"),
         value_serializer=lambda value: json.dumps(value).encode("utf-8"),
     )
 

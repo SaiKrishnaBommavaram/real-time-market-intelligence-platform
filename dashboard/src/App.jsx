@@ -19,19 +19,25 @@ function App() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [news, setNews] = useState([]);
   const [newsSummary, setNewsSummary] = useState(null);
+  const [newsSummaryLoading, setNewsSummaryLoading] = useState(false);
+  const [newsSummaryError, setNewsSummaryError] = useState("");
 
   async function loadDashboard() {
+    setLoading(true);
+    setError("");
+
     try {
-      setLoading(true);
-      setError("");
-
       const healthData = await fetchHealth();
-      const marketData = await fetchMarketSummary();
-
       setHealth(healthData);
-      setSummary(marketData.data || []);
-    } catch (err) {
+    } catch {
       setHealth(null);
+    }
+
+    try {
+      const marketData = await fetchMarketSummary();
+      setSummary(marketData.data || []);
+    } catch {
+      setSummary([]);
       setError("Could not load dashboard data. Make sure FastAPI is running.");
     } finally {
       setLoading(false);
@@ -50,6 +56,8 @@ function App() {
     setError("");
     setNews([]);
     setNewsSummary(null);
+    setNewsSummaryError("");
+    setNewsSummaryLoading(true);
 
     try {
       const liveData = await fetchLiveStock(cleanedTicker);
@@ -73,6 +81,9 @@ function App() {
       setNewsSummary(summaryData);
     } catch {
       setNewsSummary(null);
+      setNewsSummaryError("News summary is unavailable for this ticker right now.");
+    } finally {
+      setNewsSummaryLoading(false);
     }
 
     setSearchLoading(false);
@@ -173,11 +184,22 @@ function App() {
             </section>
           )}
 
-          {(news.length > 0 || newsSummary) && (
+          {(news.length > 0 || newsSummary || newsSummaryLoading || newsSummaryError) && (
             <section className="panel">
               <div className="panel-header">
                 <h2>Latest News & Sentiment</h2>
               </div>
+
+              {newsSummaryLoading && (
+                <div className="summary-card">
+                  <div className="summary-header">
+                    <h3>News Summary</h3>
+                    <span className="summary-source fallback">Generating...</span>
+                  </div>
+
+                  <p>Generating a market summary from the latest articles.</p>
+                </div>
+              )}
 
               {newsSummary && (
                 <div className="summary-card">
@@ -195,6 +217,17 @@ function App() {
                   </div>
 
                   <p>{newsSummary.summary}</p>
+                </div>
+              )}
+
+              {!newsSummaryLoading && newsSummaryError && (
+                <div className="summary-card">
+                  <div className="summary-header">
+                    <h3>News Summary</h3>
+                    <span className="summary-source fallback">Unavailable</span>
+                  </div>
+
+                  <p>{newsSummaryError}</p>
                 </div>
               )}
 

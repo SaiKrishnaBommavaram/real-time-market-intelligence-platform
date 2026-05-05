@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 
 import psycopg2
 from airflow import DAG
@@ -7,11 +8,11 @@ from airflow.operators.python import PythonOperator
 
 def check_postgres_stock_rows():
     conn = psycopg2.connect(
-        host="postgres",
-        port=5432,
-        database="market_data",
-        user="postgres",
-        password="postgres",
+        host=os.getenv("MARKET_DB_HOST", "postgres"),
+        port=int(os.getenv("MARKET_DB_PORT", "5432")),
+        database=os.getenv("MARKET_DB_NAME", "market_data"),
+        user=os.getenv("MARKET_DB_USER", "postgres"),
+        password=os.getenv("MARKET_DB_PASSWORD", "postgres"),
     )
 
     cur = conn.cursor()
