@@ -32,3 +32,56 @@ docker compose up -d
 ```
 
 All local Python services and consumers now read their DB, Kafka, and MinIO settings from `.env`, so they will target this isolated stack by default.
+
+## Netlify frontend + public API
+
+Netlify should deploy the React dashboard from `dashboard/`. The backend should be hosted separately as a public FastAPI service.
+
+### Frontend on Netlify
+
+This repo includes `netlify.toml` so Netlify:
+
+- uses `dashboard/` as the base directory
+- runs `npm run build`
+- publishes `dashboard/dist`
+
+In the Netlify site settings, add:
+
+- `VITE_API_BASE_URL=https://<your-public-api-domain>`
+
+Example:
+
+```bash
+VITE_API_BASE_URL=https://real-time-market-intelligence-api.onrender.com
+```
+
+### Backend CORS for Netlify
+
+The FastAPI app now supports:
+
+- `ALLOWED_ORIGINS` for exact origins
+- `ALLOWED_ORIGIN_REGEX` for dynamic preview domains
+
+Example backend environment values:
+
+```bash
+ALLOWED_ORIGINS=http://localhost:5173,https://<your-netlify-site>.netlify.app
+ALLOWED_ORIGIN_REGEX=https://.*--<your-netlify-site>\.netlify\.app
+```
+
+That regex covers Netlify deploy previews and branch deploys such as:
+
+- `https://deploy-preview-12--<your-netlify-site>.netlify.app`
+- `https://feature-branch--<your-netlify-site>.netlify.app`
+
+### Public FastAPI deployment
+
+This repo includes `render.yaml` for deploying the FastAPI app to Render.
+
+Start command:
+
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port $PORT
+```
+
+After the backend is live, copy its public URL into the Netlify `VITE_API_BASE_URL` environment variable and redeploy the Netlify site.

@@ -29,6 +29,12 @@ LOCAL_SUMMARIZER_INPUT_MAX_TOKENS = int(
 )
 ARTICLE_NOTE_MAX_LENGTH = int(os.getenv("ARTICLE_NOTE_MAX_LENGTH", "60"))
 ARTICLE_NOTE_MIN_LENGTH = int(os.getenv("ARTICLE_NOTE_MIN_LENGTH", "20"))
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX")
 _summarizer_tokenizer = None
 _summarizer_model = None
 _summarizer_load_error = None
@@ -43,7 +49,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
