@@ -85,3 +85,22 @@ uvicorn api.main:app --host 0.0.0.0 --port $PORT
 ```
 
 After the backend is live, copy its public URL into the Netlify `VITE_API_BASE_URL` environment variable and redeploy the Netlify site.
+
+## AWS deployment baseline
+
+This repo now includes a first-pass AWS deployment baseline for the current split architecture:
+
+- `amplify.yml` for AWS Amplify Hosting of the React dashboard
+- `Procfile` for AWS Elastic Beanstalk running the FastAPI backend
+- `Dockerfile` for a future ECS/Fargate or Docker-based AWS deployment path
+
+Recommended managed AWS shape:
+
+- Frontend: Amplify Hosting
+- Backend: Elastic Beanstalk
+- Database: Amazon RDS for PostgreSQL
+- Object storage: Amazon S3
+
+Set `VITE_API_BASE_URL` in Amplify to your backend URL, and set the backend environment variables for `MARKET_DB_*`, `NEWS_API_KEY`, and CORS (`ALLOWED_ORIGINS`, optionally `ALLOWED_ORIGIN_REGEX`).
+
+Detailed AWS notes live in [aws/README.md](/Users/saikrishnabommavaram/Downloads/real-time-market-intelligence-platform/aws/README.md).
