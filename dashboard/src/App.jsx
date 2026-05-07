@@ -36,9 +36,13 @@ function App() {
     try {
       const marketData = await fetchMarketSummary();
       setSummary(marketData.data || []);
-    } catch {
+    } catch (err) {
       setSummary([]);
-      setError("Could not load dashboard data. Make sure FastAPI is running.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not load dashboard data. Make sure FastAPI is running.",
+      );
     } finally {
       setLoading(false);
     }
@@ -242,7 +246,9 @@ function App() {
                         {item.sentiment > 0 ? "Positive" : item.sentiment < 0 ? "Negative" : "Neutral"}
                       </span>
 
-                      <a href={item.url} target="_blank">Read →</a>
+                      <a href={item.url} target="_blank" rel="noreferrer">
+                        Read →
+                      </a>
                     </div>
                   </div>
                 ))}

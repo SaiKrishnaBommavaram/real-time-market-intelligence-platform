@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.venv
+venv
+env
+__pycache__/
+*.pyc
+airflow/logs/
+dbt/logs/
+dashboard/node_modules/
+dashboard/dist/
+postgres_data/
+minio_data/

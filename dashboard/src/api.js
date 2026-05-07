@@ -1,31 +1,45 @@
 import axios from "axios";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const isLocalHost =
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+const API_BASE_URL = configuredApiBaseUrl || (isLocalHost ? "http://localhost:8000" : null);
+
+function getApiBaseUrl() {
+  if (!API_BASE_URL) {
+    throw new Error(
+      "VITE_API_BASE_URL is not configured for this deployed frontend.",
+    );
+  }
+
+  return API_BASE_URL;
+}
 
 export async function fetchHealth() {
-  const response = await axios.get(`${API_BASE_URL}/health`);
+  const response = await axios.get(`${getApiBaseUrl()}/health`);
   return response.data;
 }
 
 export async function fetchMarketSummary() {
-  const response = await axios.get(`${API_BASE_URL}/market/summary`);
+  const response = await axios.get(`${getApiBaseUrl()}/market/summary`);
   return response.data;
 }
 
 export async function fetchLiveStock(ticker) {
-  const response = await axios.get(`${API_BASE_URL}/stocks/${ticker}/live`);
+  const response = await axios.get(`${getApiBaseUrl()}/stocks/${ticker}/live`);
   return response.data;
 }
 
 export async function fetchStockNews(ticker) {
-  const response = await axios.get(`${API_BASE_URL}/stocks/${ticker}/news`);
+  const response = await axios.get(`${getApiBaseUrl()}/stocks/${ticker}/news`);
   return response.data;
 }
 
 export async function fetchStockNewsSummary(ticker) {
   const response = await axios.get(
-    `${API_BASE_URL}/stocks/${ticker}/news/summary`,
+    `${getApiBaseUrl()}/stocks/${ticker}/news/summary`,
   );
   return response.data;
 }
