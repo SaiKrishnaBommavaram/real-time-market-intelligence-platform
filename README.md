@@ -66,7 +66,7 @@ Example backend environment values:
 
 ```bash
 ALLOWED_ORIGINS=http://localhost:5173,https://<your-netlify-site>.netlify.app
-ALLOWED_ORIGIN_REGEX=https://.*--<your-netlify-site>\.netlify\.app
+ALLOWED_ORIGIN_REGEX=^https://[a-z0-9-]+--<your-netlify-site>\.netlify\.app$
 ```
 
 That regex covers Netlify deploy previews and branch deploys such as:
