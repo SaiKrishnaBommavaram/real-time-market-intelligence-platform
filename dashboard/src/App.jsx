@@ -15,7 +15,7 @@ function App() {
   const [ticker, setTicker] = useState("AAPL");
   const [liveStock, setLiveStock] = useState(null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
   const [news, setNews] = useState([]);
   const [newsSummary, setNewsSummary] = useState(null);
@@ -94,7 +94,46 @@ function App() {
   }
 
   useEffect(() => {
-    loadDashboard();
+    let isCurrent = true;
+
+    async function loadInitialDashboard() {
+      try {
+        const healthData = await fetchHealth();
+        if (isCurrent) {
+          setHealth(healthData);
+        }
+      } catch {
+        if (isCurrent) {
+          setHealth(null);
+        }
+      }
+
+      try {
+        const marketData = await fetchMarketSummary();
+        if (isCurrent) {
+          setSummary(marketData.data || []);
+        }
+      } catch (err) {
+        if (isCurrent) {
+          setSummary([]);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Could not load dashboard data. Make sure FastAPI is running.",
+          );
+        }
+      } finally {
+        if (isCurrent) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInitialDashboard();
+
+    return () => {
+      isCurrent = false;
+    };
   }, []);
 
   return (
