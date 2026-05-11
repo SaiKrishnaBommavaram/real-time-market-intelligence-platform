@@ -32,6 +32,11 @@ export async function fetchLiveStock(ticker) {
   return response.data;
 }
 
+export async function fetchStockSummary(ticker) {
+  const response = await axios.get(`${getApiBaseUrl()}/stocks/${ticker}/summary`);
+  return response.data;
+}
+
 export async function fetchStockNews(ticker) {
   const response = await axios.get(`${getApiBaseUrl()}/stocks/${ticker}/news`);
   return response.data;
