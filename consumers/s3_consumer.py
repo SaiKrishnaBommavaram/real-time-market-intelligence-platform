@@ -6,6 +6,11 @@ import boto3
 from dotenv import load_dotenv
 from kafka import KafkaConsumer
 
+try:
+    from consumers.event_validation import validate_stock_event
+except ModuleNotFoundError:
+    from event_validation import validate_stock_event
+
 
 load_dotenv()
 
@@ -18,7 +23,7 @@ def create_consumer():
         TOPIC_NAME,
         bootstrap_servers=os.getenv("MARKET_KAFKA_BOOTSTRAP_SERVERS", "localhost:59092"),
         auto_offset_reset="earliest",
-        enable_auto_commit=True,
+        enable_auto_commit=False,
         group_id="stock_price_s3_consumer",
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
     )
@@ -67,8 +72,15 @@ def main():
 
     try:
         for message in consumer:
-            event = message.value
+            try:
+                event = validate_stock_event(message.value)
+            except (TypeError, ValueError) as exc:
+                print(f"Skipping invalid Kafka event at offset {message.offset}: {exc}")
+                consumer.commit()
+                continue
+
             s3_key = upload_event_to_s3(s3_client, event)
+            consumer.commit()
             print(f"Uploaded event to s3://{BUCKET_NAME}/{s3_key}")
 
     except KeyboardInterrupt:

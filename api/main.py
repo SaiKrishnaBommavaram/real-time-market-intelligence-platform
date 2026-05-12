@@ -38,7 +38,7 @@ ALLOWED_ORIGIN_REGEX = os.getenv("ALLOWED_ORIGIN_REGEX")
 _summarizer_tokenizer = None
 _summarizer_model = None
 _summarizer_load_error = None
-_search_cache_table_ready = False
+_search_cache_table_verified = False
 
 
 app = FastAPI(
@@ -167,41 +167,26 @@ def enrich_article_content(article: dict):
     return enriched
 
 
-def ensure_stock_search_cache_table():
-    global _search_cache_table_ready
+def verify_stock_search_cache_table():
+    global _search_cache_table_verified
 
-    if _search_cache_table_ready:
+    if _search_cache_table_verified:
         return
 
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS stock_search_cache (
-            id SERIAL PRIMARY KEY,
-            ticker VARCHAR(10) NOT NULL,
-            cache_date DATE NOT NULL,
-            live_price NUMERIC(10, 2),
-            live_volume BIGINT,
-            live_event_time TIMESTAMPTZ,
-            live_source VARCHAR(100),
-            news_articles JSONB,
-            news_summary TEXT,
-            summary_source VARCHAR(100),
-            summary_model VARCHAR(255),
-            summary_fallback_reason TEXT,
-            live_updated_at TIMESTAMPTZ,
-            news_updated_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE (ticker, cache_date)
-        );
-        """
-    )
-    conn.commit()
+    cur.execute("SELECT to_regclass('public.stock_search_cache') AS table_name;")
+    row = cur.fetchone()
     cur.close()
     conn.close()
-    _search_cache_table_ready = True
+
+    if not row or not row.get("table_name"):
+        raise RuntimeError(
+            "public.stock_search_cache does not exist. "
+            "Run the Postgres init SQL before starting the API."
+        )
+
+    _search_cache_table_verified = True
 
 
 def get_today_cache_date():
@@ -209,7 +194,7 @@ def get_today_cache_date():
 
 
 def get_daily_stock_search_cache(ticker: str):
-    ensure_stock_search_cache_table()
+    verify_stock_search_cache_table()
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -228,7 +213,7 @@ def get_daily_stock_search_cache(ticker: str):
 
 
 def upsert_live_stock_cache(ticker: str, payload: dict):
-    ensure_stock_search_cache_table()
+    verify_stock_search_cache_table()
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -269,7 +254,7 @@ def upsert_live_stock_cache(ticker: str, payload: dict):
 
 
 def upsert_news_cache(ticker: str, articles: list, summary: dict):
-    ensure_stock_search_cache_table()
+    verify_stock_search_cache_table()
 
     conn = get_db_connection()
     cur = conn.cursor()

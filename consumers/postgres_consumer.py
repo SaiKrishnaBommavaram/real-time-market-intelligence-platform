@@ -5,6 +5,11 @@ import psycopg2
 from dotenv import load_dotenv
 from kafka import KafkaConsumer
 
+try:
+    from consumers.event_validation import validate_stock_event
+except ModuleNotFoundError:
+    from event_validation import validate_stock_event
+
 
 load_dotenv()
 
@@ -21,35 +26,12 @@ def get_db_connection():
     )
 
 
-def create_table():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS stock_prices (
-            id SERIAL PRIMARY KEY,
-            ticker VARCHAR(10) NOT NULL,
-            price NUMERIC(10, 2) NOT NULL,
-            volume BIGINT NOT NULL,
-            event_time TIMESTAMPTZ NOT NULL,
-            source VARCHAR(100),
-            inserted_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        """
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
 def create_consumer():
     return KafkaConsumer(
         TOPIC_NAME,
         bootstrap_servers=os.getenv("MARKET_KAFKA_BOOTSTRAP_SERVERS", "localhost:59092"),
         auto_offset_reset="earliest",
-        enable_auto_commit=True,
+        enable_auto_commit=False,
         group_id="stock_price_postgres_consumer",
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
     )
@@ -83,8 +65,6 @@ def insert_event(conn, event):
 
 
 def main():
-    create_table()
-
     conn = get_db_connection()
     consumer = create_consumer()
 
@@ -93,9 +73,20 @@ def main():
 
     try:
         for message in consumer:
-            event = message.value
-            insert_event(conn, event)
-            print(f"Inserted event: {event}")
+            try:
+                event = validate_stock_event(message.value)
+            except (TypeError, ValueError) as exc:
+                print(f"Skipping invalid Kafka event at offset {message.offset}: {exc}")
+                consumer.commit()
+                continue
+
+            try:
+                insert_event(conn, event)
+                consumer.commit()
+                print(f"Inserted event: {event}")
+            except psycopg2.Error:
+                conn.rollback()
+                raise
 
     except KeyboardInterrupt:
         print("Stopping consumer...")

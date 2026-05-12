@@ -81,6 +81,14 @@ docker compose down -v
 docker compose up -d
 ```
 
+The same applies to schema changes in `postgres/init/01-create-databases.sql`.
+For an existing local volume, either recreate the volume or apply the init SQL
+manually:
+
+```bash
+psql "postgresql://postgres:postgres@localhost:55432/market_data" -f postgres/init/01-create-databases.sql
+```
+
 Default host ports:
 
 - PostgreSQL: `55432`
