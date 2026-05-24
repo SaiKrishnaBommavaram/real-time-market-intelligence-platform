@@ -3,8 +3,12 @@ import os
 from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 from kafka import KafkaConsumer
+from kafka.errors import KafkaError
+
+from pipeline_runtime import get_logger, retry
 
 try:
     from consumers.event_validation import validate_stock_event
@@ -16,6 +20,10 @@ load_dotenv()
 
 TOPIC_NAME = os.getenv("MARKET_KAFKA_TOPIC", "stock_prices")
 BUCKET_NAME = os.getenv("MARKET_S3_BUCKET", "market-data-lake")
+CONSUMER_MAX_RETRIES = int(os.getenv("MARKET_CONSUMER_MAX_RETRIES", "3"))
+CONSUMER_BACKOFF_SECONDS = float(os.getenv("MARKET_CONSUMER_BACKOFF_SECONDS", "1"))
+
+logger = get_logger("market.s3_consumer")
 
 
 def create_consumer():
@@ -63,28 +71,99 @@ def upload_event_to_s3(s3_client, event):
     return s3_key
 
 
+def upload_event_to_s3_with_retry(s3_client, event, message):
+    return retry(
+        "upload_event_to_s3",
+        lambda: upload_event_to_s3(s3_client, event),
+        (BotoCoreError, ClientError),
+        logger,
+        max_attempts=CONSUMER_MAX_RETRIES,
+        base_delay_seconds=CONSUMER_BACKOFF_SECONDS,
+        context={
+            "ticker": event["ticker"],
+            "topic": message.topic,
+            "partition": message.partition,
+            "offset": message.offset,
+            "bucket": BUCKET_NAME,
+        },
+    )
+
+
+def commit_offset(consumer, message, reason):
+    retry(
+        "commit_offset",
+        consumer.commit,
+        (KafkaError,),
+        logger,
+        max_attempts=CONSUMER_MAX_RETRIES,
+        base_delay_seconds=CONSUMER_BACKOFF_SECONDS,
+        context={
+            "topic": message.topic,
+            "partition": message.partition,
+            "offset": message.offset,
+            "reason": reason,
+        },
+    )
+
+
 def main():
     consumer = create_consumer()
     s3_client = create_s3_client()
 
-    print(f"Consuming Kafka topic: {TOPIC_NAME}")
-    print(f"Writing raw events to S3 bucket: {BUCKET_NAME}")
+    logger.info(
+        "consumer_started",
+        extra={"topic": TOPIC_NAME, "sink": "s3", "bucket": BUCKET_NAME},
+    )
 
     try:
         for message in consumer:
             try:
                 event = validate_stock_event(message.value)
             except (TypeError, ValueError) as exc:
-                print(f"Skipping invalid Kafka event at offset {message.offset}: {exc}")
-                consumer.commit()
+                logger.warning(
+                    "invalid_event_skipped",
+                    extra={
+                        "topic": message.topic,
+                        "partition": message.partition,
+                        "offset": message.offset,
+                        "sink": "s3",
+                    },
+                    exc_info=exc,
+                )
+                commit_offset(consumer, message, "invalid_event")
                 continue
 
-            s3_key = upload_event_to_s3(s3_client, event)
-            consumer.commit()
-            print(f"Uploaded event to s3://{BUCKET_NAME}/{s3_key}")
+            try:
+                s3_key = upload_event_to_s3_with_retry(s3_client, event, message)
+                commit_offset(consumer, message, "persisted")
+                logger.info(
+                    "event_persisted",
+                    extra={
+                        "ticker": event["ticker"],
+                        "topic": message.topic,
+                        "partition": message.partition,
+                        "offset": message.offset,
+                        "sink": "s3",
+                        "bucket": BUCKET_NAME,
+                        "s3_key": s3_key,
+                    },
+                )
+            except (BotoCoreError, ClientError) as exc:
+                logger.error(
+                    "event_persist_failed",
+                    extra={
+                        "ticker": event["ticker"],
+                        "topic": message.topic,
+                        "partition": message.partition,
+                        "offset": message.offset,
+                        "sink": "s3",
+                        "bucket": BUCKET_NAME,
+                    },
+                    exc_info=exc,
+                )
 
     except KeyboardInterrupt:
-        print("Stopping S3 consumer...")
+        logger.info("consumer_stopping", extra={"topic": TOPIC_NAME, "sink": "s3"})
 
     finally:
         consumer.close()
