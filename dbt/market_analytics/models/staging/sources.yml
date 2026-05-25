@@ -1,0 +1,34 @@
+version: 2
+
+sources:
+  - name: market_data
+    description: "Operational PostgreSQL tables populated by the Kafka consumers."
+    database: market_data
+    schema: public
+    tables:
+      - name: stock_prices
+        description: "Raw stock price events persisted from Kafka."
+        loaded_at_field: inserted_at
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 6, period: hour}
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: ticker
+            tests:
+              - not_null
+          - name: price
+            tests:
+              - not_null
+          - name: volume
+            tests:
+              - not_null
+          - name: event_time
+            tests:
+              - not_null
+          - name: inserted_at
+            tests:
+              - not_null

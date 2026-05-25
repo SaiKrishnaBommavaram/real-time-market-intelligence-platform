@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: daily_stock_summary
+    description: "Daily aggregated warehouse summary by ticker."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: event_count
+        tests:
+          - not_null
+      - name: avg_price
+        tests:
+          - not_null
+      - name: min_price
+        tests:
+          - not_null
+      - name: max_price
+        tests:
+          - not_null
+      - name: total_volume
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "ticker || '-' || trade_date::text"

@@ -1,3 +1,7 @@
+{{ config(
+    alias='daily_stock_summary'
+) }}
+
 SELECT
     ticker,
     DATE(event_time) AS trade_date,

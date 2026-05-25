@@ -17,6 +17,14 @@ models:
         tests:
           - not_null
 
+      - name: volume
+        tests:
+          - not_null
+
       - name: event_time
+        tests:
+          - not_null
+
+      - name: source
         tests:
           - not_null
