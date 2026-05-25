@@ -35,15 +35,24 @@ Set these Elastic Beanstalk environment properties:
 ```text
 ALLOWED_ORIGINS=https://<your-amplify-domain>
 ALLOWED_ORIGIN_REGEX=
+MARKET_CONSUMER_BACKOFF_SECONDS=1
+MARKET_CONSUMER_MAX_RETRIES=3
+MARKET_DQ_MAX_EVENT_AGE_MINUTES=90
+MARKET_DQ_MAX_SUMMARY_AGE_HOURS=24
 NEWS_API_KEY=<your-news-api-key>
 MARKET_DB_HOST=<your-rds-endpoint>
 MARKET_DB_PORT=5432
 MARKET_DB_NAME=market_data
 MARKET_DB_USER=<your-db-user>
 MARKET_DB_PASSWORD=<your-db-password>
+MARKET_PRODUCER_BACKOFF_SECONDS=1
+MARKET_PRODUCER_MAX_RETRIES=3
+MARKET_PRODUCER_POLL_SECONDS=60
 ```
 
 If you use an RDS database inside a private VPC, the Beanstalk environment must have network access to that VPC and its security group rules must allow PostgreSQL traffic on `5432`.
+
+The backend code is now split into route, service, repository, and config modules under `api/`, but the deployment entrypoint remains `api.main:app`.
 
 ## Frontend deployment notes
 

@@ -19,11 +19,14 @@ An end-to-end market data platform that:
 3. `consumers/postgres_consumer.py` consumes those events into `public.stock_prices`.
 4. `consumers/s3_consumer.py` writes the same raw events into the S3 bucket path `raw/stocks/date=.../ticker=.../`.
 5. dbt reads `public.stock_prices` and builds analytics models, including `analytics.daily_stock_summary`.
-6. `api/main.py` serves:
+6. `api/` serves:
    - warehouse summaries from dbt models
    - live ticker data from Yahoo Finance
    - ticker news from NewsAPI
    - local news summaries using a Hugging Face summarization model
+   - route handlers from `api/routes/`
+   - business logic from `api/services/`
+   - persistence access from `api/repositories/`
 7. `dashboard/` calls the API and displays health, warehouse summaries, live ticker data, and news sentiment.
 
 ### Repo layout
@@ -64,6 +67,9 @@ Important variables:
 - `MARKET_DB_*`: PostgreSQL connection
 - `MARKET_KAFKA_*`: Kafka connection and topic
 - `MARKET_S3_*`: MinIO/S3 connection and bucket
+- `MARKET_PRODUCER_POLL_SECONDS`, `MARKET_PRODUCER_MAX_RETRIES`, `MARKET_PRODUCER_BACKOFF_SECONDS`: producer polling and retry behavior
+- `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
+- `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
 - `VITE_API_BASE_URL`: frontend API base URL
 - `ALLOWED_ORIGINS` and `ALLOWED_ORIGIN_REGEX`: backend CORS
@@ -116,6 +122,13 @@ docker compose run --rm airflow-webserver airflow users create --username admin 
 ```
 
 Then open `http://localhost:58080`.
+
+The DAG `market_data_quality_check` now validates:
+
+- raw row presence in `public.stock_prices`
+- raw event freshness
+- duplicate raw events grouped by `ticker`, `event_time`, and `source`
+- freshness of `analytics.daily_stock_summary`
 
 ### 5. Install application dependencies
 
@@ -173,12 +186,16 @@ source .venv/bin/activate
 python producers/stock_producer.py
 ```
 
+The producer now batches sends per polling cycle, retries transient Yahoo/Kafka failures, and emits structured JSON logs.
+
 PostgreSQL consumer:
 
 ```bash
 source .venv/bin/activate
 python consumers/postgres_consumer.py
 ```
+
+The PostgreSQL consumer now commits Kafka offsets only after a successful insert or an explicit invalid-event skip.
 
 S3 consumer:
 
@@ -187,16 +204,26 @@ source .venv/bin/activate
 python consumers/s3_consumer.py
 ```
 
+The S3 consumer now retries uploads, commits offsets only after a successful upload or explicit skip, and emits structured JSON logs.
+
 ### 8. Build warehouse models with dbt
 
 After the producer and PostgreSQL consumer have created some rows:
 
 ```bash
 cd dbt/market_analytics
+dbt source freshness
 dbt run
 dbt test
 cd ../..
 ```
+
+The dbt project now includes:
+
+- explicit staging and mart model configs
+- source freshness rules for `public.stock_prices`
+- stronger schema tests for source, staging, and mart models
+- singular tests for duplicate raw events and invalid summary price bounds
 
 ### 9. Start the API
 
@@ -273,6 +300,14 @@ Builds a 2-step local summary:
 
 The default model is `sshleifer/distilbart-cnn-12-6`. On the first request, the model may need to download locally. If summarization fails, the API returns a deterministic fallback summary instead of a hard error.
 
+## Backend Layout
+
+- `api/main.py`: app assembly and CORS middleware
+- `api/config.py`: environment-backed settings
+- `api/routes/`: FastAPI route handlers
+- `api/services/`: market, news, and summarization logic
+- `api/repositories/`: database and cache access
+
 ## Data Stores
 
 ### PostgreSQL
@@ -296,11 +331,11 @@ raw/stocks/date=YYYY-MM-DD/ticker=SYMBOL/event_<timestamp>.json
 
 ## Airflow
 
-`airflow/dags/market_data_quality_dag.py` runs an hourly quality check against PostgreSQL and fails if `stock_prices` has zero rows.
+`airflow/dags/market_data_quality_dag.py` runs an hourly quality check against PostgreSQL and validates raw row presence, raw freshness, duplicate raw events, and mart freshness.
 
 Notes:
 
-- The DAG validates raw ingestion, not dbt marts.
+- The DAG validates both raw ingestion and the freshness of the dbt mart.
 - The default DAG `start_date` is `2026-01-01`.
 
 ## Frontend Deployment on Netlify
@@ -327,6 +362,13 @@ Required backend environment variables:
 
 - `ALLOWED_ORIGINS`
 - `ALLOWED_ORIGIN_REGEX` if you need dynamic preview domains
+- `MARKET_PRODUCER_POLL_SECONDS`
+- `MARKET_PRODUCER_MAX_RETRIES`
+- `MARKET_PRODUCER_BACKOFF_SECONDS`
+- `MARKET_CONSUMER_MAX_RETRIES`
+- `MARKET_CONSUMER_BACKOFF_SECONDS`
+- `MARKET_DQ_MAX_EVENT_AGE_MINUTES`
+- `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`
 - `NEWS_API_KEY`
 - `MARKET_DB_HOST`
 - `MARKET_DB_PORT`
@@ -368,6 +410,10 @@ That is expected if the local Hugging Face model has not been downloaded yet.
 ### The S3 consumer fails with `NoSuchBucket`
 
 Create the MinIO bucket first. The consumer does not create it automatically.
+
+### Consumer or producer logs look different after the pipeline changes
+
+That is expected. The producer and consumers now emit structured JSON logs to make retries, offsets, and sink failures easier to trace.
 
 ### Airflow is up but login or metadata tables are broken
 
