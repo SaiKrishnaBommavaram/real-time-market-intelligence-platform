@@ -14,6 +14,7 @@ class Settings:
     app_title = "Real-Time Market Intelligence API"
     app_description = "API for serving transformed market analytics from PostgreSQL/dbt models."
     app_version = "1.0.0"
+    log_level = os.getenv("LOG_LEVEL", "INFO")
 
     news_api_key = os.getenv("NEWS_API_KEY")
     local_summarizer_model = os.getenv(
