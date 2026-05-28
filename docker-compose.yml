@@ -1,15 +1,24 @@
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     ports:
       - "${MARKET_ZOOKEEPER_HOST_PORT:-52181}:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "cub zk-ready localhost 2181 30"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
+    restart: unless-stopped
     ports:
       - "${MARKET_KAFKA_HOST_PORT:-59092}:9092"
     environment:
@@ -17,9 +26,16 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${MARKET_KAFKA_HOST_PORT:-59092}
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "cub kafka-ready -b localhost:9092 1 30"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${MARKET_DB_NAME:-market_data}
       POSTGRES_USER: ${MARKET_DB_USER:-postgres}
@@ -29,8 +45,15 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MARKET_DB_USER:-postgres} -d ${MARKET_DB_NAME:-market_data}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
   minio:
     image: minio/minio
+    restart: unless-stopped
     ports:
       - "${MARKET_MINIO_API_HOST_PORT:-59000}:9000"
       - "${MARKET_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
@@ -44,7 +67,9 @@ services:
   airflow-webserver:
     image: apache/airflow:2.9.1
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-postgres}:${AIRFLOW_DB_PASSWORD:-postgres}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
@@ -55,11 +80,19 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
     command: webserver
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   airflow-scheduler:
     image: apache/airflow:2.9.1
     depends_on:
-      - airflow-webserver
+      airflow-webserver:
+        condition: service_healthy
+    restart: unless-stopped
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-postgres}:${AIRFLOW_DB_PASSWORD:-postgres}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
@@ -68,6 +101,12 @@ services:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
     command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
 volumes:
   postgres_data:
