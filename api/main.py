@@ -2,8 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
+from api.logging import configure_logging, log_request_middleware
 from api.routes.market import router as market_router
 
+
+configure_logging()
 
 app = FastAPI(
     title=settings.app_title,
@@ -19,5 +22,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.middleware("http")(log_request_middleware)
 
 app.include_router(market_router)
