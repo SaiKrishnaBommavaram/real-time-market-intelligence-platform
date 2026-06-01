@@ -71,7 +71,10 @@ Important variables:
 - `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
+- `MARKET_API_KEY`: optional shared API key for protecting non-health API routes
+- `MARKET_RATE_LIMIT_MAX_REQUESTS`, `MARKET_RATE_LIMIT_WINDOW_SECONDS`: in-memory per-client API rate limits
 - `VITE_API_BASE_URL`: frontend API base URL
+- `VITE_API_KEY`: frontend API key header value when `MARKET_API_KEY` is enabled
 - `ALLOWED_ORIGINS` and `ALLOWED_ORIGIN_REGEX`: backend CORS
 
 ### 2. Start the infrastructure stack
