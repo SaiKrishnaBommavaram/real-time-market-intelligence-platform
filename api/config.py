@@ -35,6 +35,10 @@ class Settings:
         if origin.strip()
     ]
     allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX")
+    api_key = os.getenv("MARKET_API_KEY")
+    api_key_header = os.getenv("MARKET_API_KEY_HEADER", "x-api-key")
+    rate_limit_max_requests = _get_int("MARKET_RATE_LIMIT_MAX_REQUESTS", "120")
+    rate_limit_window_seconds = _get_int("MARKET_RATE_LIMIT_WINDOW_SECONDS", "60")
 
     db_host = os.getenv("MARKET_DB_HOST", "localhost")
     db_port = _get_int("MARKET_DB_PORT", "55432")
