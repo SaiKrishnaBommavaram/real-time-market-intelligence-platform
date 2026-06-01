@@ -26,6 +26,12 @@ npm run dev
 
 The frontend expects `VITE_API_BASE_URL` to point to the FastAPI backend. For local development, it defaults to `http://localhost:8000` when opened from `localhost` if the env var is not set.
 
+If the backend is configured with `MARKET_API_KEY`, set the matching frontend key:
+
+```bash
+VITE_API_KEY=<same value as MARKET_API_KEY>
+```
+
 Recommended explicit value:
 
 ```bash
@@ -52,6 +58,7 @@ Set this environment variable in Netlify:
 
 ```bash
 VITE_API_BASE_URL=https://<your-public-api-domain>
+VITE_API_KEY=<same value as MARKET_API_KEY>
 ```
 
 ### AWS Amplify
