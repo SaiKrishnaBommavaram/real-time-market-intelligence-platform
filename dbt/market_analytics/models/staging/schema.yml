@@ -28,3 +28,23 @@ models:
       - name: source
         tests:
           - not_null
+
+      - name: open_price
+
+      - name: high_price
+
+      - name: low_price
+
+      - name: close_price
+
+      - name: event_kind
+        tests:
+          - not_null
+
+      - name: bar_interval
+        tests:
+          - not_null
+
+      - name: market_session
+        tests:
+          - not_null
