@@ -1,3 +1,6 @@
+export const DEFAULT_PRICE_ALERT_THRESHOLD = 4;
+export const DEFAULT_VOLUME_ALERT_THRESHOLD = 1.5;
+
 export function buildMarketMetrics(rows) {
   if (!rows.length) {
     return {
@@ -18,6 +21,16 @@ export function buildMarketMetrics(rows) {
     rows.reduce((sum, row) => sum + Number(row.avg_price || 0), 0) / rows.length;
 
   return { tickerCount, dayCount, totalVolume, avgPrice };
+}
+
+export function getLatestSummaryByTicker(rows) {
+  return rows.reduce((acc, row) => {
+    const current = acc[row.ticker];
+    if (!current || new Date(row.trade_date) > new Date(current.trade_date)) {
+      acc[row.ticker] = row;
+    }
+    return acc;
+  }, {});
 }
 
 export function buildMarketTrend(rows) {
@@ -49,17 +62,32 @@ export function buildMarketTrend(rows) {
 }
 
 export function buildMarketLeaders(rows) {
-  const latestByTicker = rows.reduce((acc, row) => {
-    const current = acc[row.ticker];
-    if (!current || new Date(row.trade_date) > new Date(current.trade_date)) {
-      acc[row.ticker] = row;
-    }
-    return acc;
-  }, {});
-
-  return Object.values(latestByTicker)
+  return Object.values(getLatestSummaryByTicker(rows))
     .sort((a, b) => Number(b.total_volume || 0) - Number(a.total_volume || 0))
     .slice(0, 6);
+}
+
+export function buildTopMovers(rows) {
+  return Object.values(getLatestSummaryByTicker(rows))
+    .sort(
+      (a, b) =>
+        Math.abs(Number(b.price_change_pct || 0)) -
+        Math.abs(Number(a.price_change_pct || 0)),
+    )
+    .slice(0, 6);
+}
+
+export function buildAnomalyFeed(rows) {
+  return Object.values(getLatestSummaryByTicker(rows))
+    .filter((row) => isAnomalousRow(row))
+    .sort((a, b) => {
+      const aSeverity =
+        Math.abs(Number(a.price_change_pct || 0)) + Number(a.volume_vs_avg_ratio || 0);
+      const bSeverity =
+        Math.abs(Number(b.price_change_pct || 0)) + Number(b.volume_vs_avg_ratio || 0);
+      return bSeverity - aSeverity;
+    })
+    .slice(0, 8);
 }
 
 export function buildTickerTrend(rows) {
@@ -67,8 +95,45 @@ export function buildTickerTrend(rows) {
     .map((row) => ({
       tradeDate: shortDate(row.trade_date),
       avgPrice: Number(row.avg_price || 0),
+      closePrice: Number(row.close_price || row.avg_price || 0),
     }))
     .reverse();
+}
+
+export function createWatchlistEntry(ticker) {
+  return {
+    ticker,
+    priceAlertThreshold: DEFAULT_PRICE_ALERT_THRESHOLD,
+    volumeAlertThreshold: DEFAULT_VOLUME_ALERT_THRESHOLD,
+  };
+}
+
+export function buildWatchlistEntries(rows, watchlist) {
+  const latestByTicker = getLatestSummaryByTicker(rows);
+
+  return watchlist.map((item) => {
+    const summary = latestByTicker[item.ticker];
+    const priceChange = Number(summary?.price_change_pct || 0);
+    const volumeRatio = Number(summary?.volume_vs_avg_ratio || 1);
+    const priceAlertTriggered = Math.abs(priceChange) >= Number(item.priceAlertThreshold);
+    const volumeAlertTriggered = volumeRatio >= Number(item.volumeAlertThreshold);
+
+    return {
+      ...item,
+      summary,
+      priceAlertTriggered,
+      volumeAlertTriggered,
+      hasAlert: priceAlertTriggered || volumeAlertTriggered || isAnomalousRow(summary),
+    };
+  });
+}
+
+export function isAnomalousRow(row) {
+  if (!row) {
+    return false;
+  }
+
+  return row.anomaly_flag && row.anomaly_flag !== "normal";
 }
 
 export function formatInteger(value) {
@@ -88,6 +153,15 @@ export function formatCurrency(value) {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+
+export function formatPercent(value) {
+  const numericValue = Number(value || 0);
+  return `${numericValue >= 0 ? "+" : ""}${numericValue.toFixed(2)}%`;
+}
+
+export function formatRatio(value) {
+  return `${Number(value || 0).toFixed(2)}x`;
 }
 
 export function formatDate(value) {
@@ -118,6 +192,26 @@ export function formatTooltipValue(key, value) {
   }
 
   return formatCompactNumber(value);
+}
+
+export function getPriceChangeClass(value) {
+  const numericValue = Number(value || 0);
+  if (numericValue > 0.25) return "positive";
+  if (numericValue < -0.25) return "negative";
+  return "neutral";
+}
+
+export function getAnomalyLabel(flag) {
+  switch (flag) {
+    case "price_and_volume":
+      return "Price + volume anomaly";
+    case "price_move":
+      return "Large price move";
+    case "volume_spike":
+      return "Volume spike";
+    default:
+      return "Normal";
+  }
 }
 
 export function getSentimentClass(score) {
