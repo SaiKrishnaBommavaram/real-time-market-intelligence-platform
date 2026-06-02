@@ -53,7 +53,13 @@ class MarketRepository:
                 min_price,
                 max_price,
                 total_volume,
-                last_updated_at
+                last_updated_at,
+                open_price,
+                close_price,
+                previous_close_price,
+                price_change_pct,
+                volume_vs_avg_ratio,
+                anomaly_flag
             FROM analytics.daily_stock_summary
             ORDER BY trade_date DESC, ticker
             LIMIT 100;
@@ -77,7 +83,13 @@ class MarketRepository:
                 min_price,
                 max_price,
                 total_volume,
-                last_updated_at
+                last_updated_at,
+                open_price,
+                close_price,
+                previous_close_price,
+                price_change_pct,
+                volume_vs_avg_ratio,
+                anomaly_flag
             FROM analytics.daily_stock_summary
             WHERE ticker = %s
             ORDER BY trade_date DESC;
