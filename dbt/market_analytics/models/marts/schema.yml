@@ -28,6 +28,55 @@ models:
       - name: last_updated_at
         tests:
           - not_null
+      - name: open_price
+        tests:
+          - not_null
+      - name: close_price
+        tests:
+          - not_null
+      - name: previous_close_price
+      - name: price_change_pct
+        tests:
+          - not_null
+      - name: volume_vs_avg_ratio
+        tests:
+          - not_null
+      - name: anomaly_flag
+        tests:
+          - not_null
     tests:
       - unique:
           column_name: "ticker || '-' || trade_date::text"
+  - name: intraday_stock_rollup
+    description: "Hourly intraday rollup built from historical and streaming bars."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: interval_start
+        tests:
+          - not_null
+      - name: open_price
+        tests:
+          - not_null
+      - name: high_price
+        tests:
+          - not_null
+      - name: low_price
+        tests:
+          - not_null
+      - name: close_price
+        tests:
+          - not_null
+      - name: bar_count
+        tests:
+          - not_null
+      - name: total_volume
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "ticker || '-' || interval_start::text"
