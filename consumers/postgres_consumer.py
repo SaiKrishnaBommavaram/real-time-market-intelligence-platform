@@ -54,9 +54,17 @@ def insert_event(conn, event):
                 price,
                 volume,
                 event_time,
-                source
+                source,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                event_kind,
+                bar_interval,
+                market_session
             )
-            VALUES (%s, %s, %s, %s, %s);
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING;
             """,
             (
                 event["ticker"],
@@ -64,6 +72,13 @@ def insert_event(conn, event):
                 event["volume"],
                 event["event_time"],
                 event["source"],
+                event["open_price"],
+                event["high_price"],
+                event["low_price"],
+                event["close_price"],
+                event["event_kind"],
+                event["bar_interval"],
+                event["market_session"],
             ),
         )
         conn.commit()
