@@ -1,13 +1,17 @@
 import "./App.css";
 
 import { MarketOverview } from "./components/MarketOverview";
+import { MarketSignals } from "./components/MarketSignals";
 import { NewsPanel } from "./components/NewsPanel";
 import { TickerWorkspace } from "./components/TickerWorkspace";
+import { WatchlistPanel } from "./components/WatchlistPanel";
 import { useDashboardData } from "./hooks/useDashboardData";
 
 function App() {
   const {
     activeTicker,
+    addTickerToWatchlist,
+    anomalyFeed,
     error,
     health,
     latestTickerSummary,
@@ -25,8 +29,13 @@ function App() {
     ticker,
     tickerSummary,
     tickerTrend,
+    topMovers,
+    triggeredAlerts,
+    updateWatchlistThreshold,
+    watchlistEntries,
     liveStock,
     loadDashboard,
+    removeTickerFromWatchlist,
     searchTicker,
     setTicker,
   } = useDashboardData();
@@ -65,6 +74,13 @@ function App() {
             summary={summary}
           />
 
+          <MarketSignals
+            activeTicker={activeTicker}
+            anomalyFeed={anomalyFeed}
+            onTickerSelect={searchTicker}
+            topMovers={topMovers}
+          />
+
           <TickerWorkspace
             activeTicker={activeTicker}
             latestTickerSummary={latestTickerSummary}
@@ -76,6 +92,16 @@ function App() {
             ticker={ticker}
             tickerSummary={tickerSummary}
             tickerTrend={tickerTrend}
+          />
+
+          <WatchlistPanel
+            activeTicker={activeTicker}
+            onAddActiveTicker={() => addTickerToWatchlist(activeTicker)}
+            onRemoveTicker={removeTickerFromWatchlist}
+            onSelectTicker={searchTicker}
+            onUpdateThreshold={updateWatchlistThreshold}
+            triggeredAlerts={triggeredAlerts}
+            watchlistEntries={watchlistEntries}
           />
 
           <NewsPanel
