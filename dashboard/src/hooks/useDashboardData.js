@@ -9,13 +9,46 @@ import {
   fetchStockSummary,
 } from "../api";
 import {
+  buildAnomalyFeed,
   buildMarketLeaders,
   buildMarketMetrics,
   buildMarketTrend,
   buildTickerTrend,
+  buildTopMovers,
+  buildWatchlistEntries,
+  createWatchlistEntry,
 } from "../utils/dashboard";
 
 const DEFAULT_TICKER = "AAPL";
+const WATCHLIST_STORAGE_KEY = "market-dashboard-watchlist-v1";
+
+function loadStoredWatchlist() {
+  if (typeof window === "undefined") {
+    return [createWatchlistEntry(DEFAULT_TICKER)];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(WATCHLIST_STORAGE_KEY);
+    if (!rawValue) {
+      return [createWatchlistEntry(DEFAULT_TICKER)];
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+    if (!Array.isArray(parsedValue) || !parsedValue.length) {
+      return [createWatchlistEntry(DEFAULT_TICKER)];
+    }
+
+    return parsedValue
+      .filter((item) => item?.ticker)
+      .map((item) => ({
+        ticker: String(item.ticker).trim().toUpperCase(),
+        priceAlertThreshold: Number(item.priceAlertThreshold || 4),
+        volumeAlertThreshold: Number(item.volumeAlertThreshold || 1.5),
+      }));
+  } catch {
+    return [createWatchlistEntry(DEFAULT_TICKER)];
+  }
+}
 
 export function useDashboardData() {
   const [health, setHealth] = useState(null);
@@ -31,18 +64,37 @@ export function useDashboardData() {
   const [newsSummary, setNewsSummary] = useState(null);
   const [newsSummaryLoading, setNewsSummaryLoading] = useState(false);
   const [newsSummaryError, setNewsSummaryError] = useState("");
+  const [watchlist, setWatchlist] = useState(loadStoredWatchlist);
 
   const marketMetrics = useMemo(() => buildMarketMetrics(summary), [summary]);
   const marketTrend = useMemo(() => buildMarketTrend(summary), [summary]);
   const marketLeaders = useMemo(() => buildMarketLeaders(summary), [summary]);
+  const topMovers = useMemo(() => buildTopMovers(summary), [summary]);
+  const anomalyFeed = useMemo(() => buildAnomalyFeed(summary), [summary]);
   const quickTickers = useMemo(
     () => marketLeaders.map((row) => row.ticker).slice(0, 5),
     [marketLeaders],
   );
   const tickerTrend = useMemo(() => buildTickerTrend(tickerSummary), [tickerSummary]);
   const latestTickerSummary = tickerSummary[0] || null;
+  const watchlistEntries = useMemo(
+    () => buildWatchlistEntries(summary, watchlist),
+    [summary, watchlist],
+  );
+  const triggeredAlerts = useMemo(
+    () => watchlistEntries.filter((entry) => entry.hasAlert),
+    [watchlistEntries],
+  );
 
   const hasInitialized = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
+  }, [watchlist]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -145,8 +197,47 @@ export function useDashboardData() {
     void initialize();
   }, [loadDashboard, searchTicker]);
 
+  function addTickerToWatchlist(nextTicker = activeTicker) {
+    const cleanedTicker = nextTicker.trim().toUpperCase();
+    if (!cleanedTicker) {
+      return;
+    }
+
+    setWatchlist((currentWatchlist) => {
+      if (currentWatchlist.some((item) => item.ticker === cleanedTicker)) {
+        return currentWatchlist;
+      }
+
+      return [...currentWatchlist, createWatchlistEntry(cleanedTicker)];
+    });
+  }
+
+  function removeTickerFromWatchlist(tickerToRemove) {
+    setWatchlist((currentWatchlist) => {
+      const nextWatchlist = currentWatchlist.filter((item) => item.ticker !== tickerToRemove);
+      return nextWatchlist.length ? nextWatchlist : [createWatchlistEntry(DEFAULT_TICKER)];
+    });
+  }
+
+  function updateWatchlistThreshold(tickerToUpdate, fieldName, nextValue) {
+    const normalizedValue = Number(nextValue);
+    if (!Number.isFinite(normalizedValue) || normalizedValue <= 0) {
+      return;
+    }
+
+    setWatchlist((currentWatchlist) =>
+      currentWatchlist.map((item) =>
+        item.ticker === tickerToUpdate
+          ? { ...item, [fieldName]: normalizedValue }
+          : item,
+      ),
+    );
+  }
+
   return {
     activeTicker,
+    addTickerToWatchlist,
+    anomalyFeed,
     error,
     health,
     latestTickerSummary,
@@ -160,11 +251,16 @@ export function useDashboardData() {
     newsSummaryError,
     newsSummaryLoading,
     quickTickers,
+    removeTickerFromWatchlist,
     searchLoading,
     summary,
     ticker,
     tickerSummary,
     tickerTrend,
+    topMovers,
+    triggeredAlerts,
+    updateWatchlistThreshold,
+    watchlistEntries,
     loadDashboard,
     searchTicker,
     setTicker,
