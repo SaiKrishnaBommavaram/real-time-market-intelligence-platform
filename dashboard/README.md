@@ -9,6 +9,8 @@ This directory contains the React + Vite frontend for the market intelligence pl
 - live ticker data from `GET /stocks/{ticker}/live`
 - recent news articles from `GET /stocks/{ticker}/news`
 - local or fallback news summaries from `GET /stocks/{ticker}/news/summary`
+- watchlists with client-side alert thresholds for price moves and volume spikes
+- top movers and anomaly flags derived from warehouse summaries
 
 ## Local development
 
