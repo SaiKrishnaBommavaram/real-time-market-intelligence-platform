@@ -142,7 +142,7 @@ export function TickerWorkspace({
                   <Tooltip content={<ChartTooltip currency />} />
                   <Area
                     type="monotone"
-                    dataKey="avgPrice"
+                    dataKey="closePrice"
                     stroke="#22c55e"
                     fill="url(#tickerPrice)"
                     strokeWidth={2}
