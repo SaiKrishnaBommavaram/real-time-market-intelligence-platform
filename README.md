@@ -68,6 +68,7 @@ Important variables:
 - `MARKET_KAFKA_*`: Kafka connection and topic
 - `MARKET_S3_*`: MinIO/S3 connection and bucket
 - `MARKET_PRODUCER_POLL_SECONDS`, `MARKET_PRODUCER_MAX_RETRIES`, `MARKET_PRODUCER_BACKOFF_SECONDS`: producer polling and retry behavior
+- `MARKET_ENABLE_HISTORY_BACKFILL`, `MARKET_HISTORY_PERIOD`, `MARKET_HISTORY_INTERVAL`, `MARKET_HISTORY_LOOKBACK_DAYS`: producer-driven historical backfill and intraday bar settings
 - `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
@@ -189,7 +190,7 @@ source .venv/bin/activate
 python producers/stock_producer.py
 ```
 
-The producer now batches sends per polling cycle, retries transient Yahoo/Kafka failures, and emits structured JSON logs.
+The producer now batches sends per polling cycle, retries transient Yahoo/Kafka failures, emits structured JSON logs, and can backfill recent historical bars before live polling starts.
 
 PostgreSQL consumer:
 
@@ -227,6 +228,8 @@ The dbt project now includes:
 - source freshness rules for `public.stock_prices`
 - stronger schema tests for source, staging, and mart models
 - singular tests for duplicate raw events and invalid summary price bounds
+- hourly intraday rollups in `analytics.intraday_stock_rollup`
+- daily anomaly fields such as `price_change_pct`, `volume_vs_avg_ratio`, and `anomaly_flag`
 
 ### 9. Start the API
 
