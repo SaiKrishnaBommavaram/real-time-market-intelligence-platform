@@ -53,3 +53,35 @@ def get_stock_news(ticker: str):
 @router.get("/stocks/{ticker}/news/summary")
 def get_stock_news_summary(ticker: str):
     return market_service.get_stock_news_summary(ticker)
+
+
+@router.get("/analytics/movers")
+def get_top_movers(limit: int = 10):
+    try:
+        return market_service.get_top_movers(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/volatility")
+def get_market_volatility(limit: int = 30):
+    try:
+        return market_service.get_market_volatility(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/sentiment/{ticker}")
+def get_sentiment_over_time(ticker: str, limit: int = 30):
+    try:
+        return market_service.get_sentiment_over_time(ticker, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/correlations/{ticker}")
+def get_ticker_correlation(ticker: str, limit: int = 8):
+    try:
+        return market_service.get_ticker_correlation(ticker, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
