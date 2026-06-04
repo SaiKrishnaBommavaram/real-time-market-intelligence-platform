@@ -23,7 +23,9 @@ An end-to-end market data platform that:
    - warehouse summaries from dbt models
    - live ticker data from Yahoo Finance
    - ticker news from NewsAPI
+   - enriched news analysis with source quality, entity extraction, clustering, and impact scoring
    - local news summaries using a Hugging Face summarization model
+   - analytics endpoints for movers, volatility, sentiment-over-time, and ticker correlation
    - route handlers from `api/routes/`
    - business logic from `api/services/`
    - persistence access from `api/repositories/`
@@ -243,6 +245,13 @@ API docs and health checks:
 - `http://localhost:8000/`
 - `http://localhost:8000/health`
 - `http://localhost:8000/docs`
+
+Additional analytics routes:
+
+- `/analytics/movers`
+- `/analytics/volatility`
+- `/analytics/sentiment/{ticker}`
+- `/analytics/correlations/{ticker}`
 
 ### 10. Start the frontend
 
