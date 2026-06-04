@@ -1,4 +1,6 @@
 import re
+from collections import Counter
+from urllib.parse import urlparse
 
 import requests
 from fastapi import HTTPException
@@ -11,6 +13,64 @@ from api.config import settings
 _summarizer_tokenizer = None
 _summarizer_model = None
 _summarizer_load_error = None
+_sentiment_analyzer = SentimentIntensityAnalyzer()
+
+STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "into",
+    "about",
+    "after",
+    "before",
+    "while",
+    "amid",
+    "over",
+    "under",
+    "stock",
+    "shares",
+    "company",
+    "market",
+    "markets",
+    "news",
+    "says",
+    "said",
+    "will",
+    "have",
+    "has",
+    "had",
+    "its",
+    "their",
+    "they",
+    "them",
+    "you",
+    "your",
+    "are",
+    "was",
+    "were",
+    "inc",
+    "corp",
+    "ltd",
+    "co",
+    "plc",
+}
+
+HIGH_QUALITY_DOMAINS = {
+    "reuters.com": 1.0,
+    "bloomberg.com": 1.0,
+    "wsj.com": 0.98,
+    "ft.com": 0.98,
+    "cnbc.com": 0.95,
+    "marketwatch.com": 0.9,
+    "finance.yahoo.com": 0.9,
+    "seekingalpha.com": 0.82,
+    "benzinga.com": 0.8,
+    "fool.com": 0.76,
+}
 
 
 def fetch_news_articles(ticker: str):
@@ -24,7 +84,7 @@ def fetch_news_articles(ticker: str):
         "https://newsapi.org/v2/everything",
         params={
             "q": ticker,
-            "pageSize": 5,
+            "pageSize": 8,
             "apiKey": settings.news_api_key,
             "sortBy": "publishedAt",
             "language": "en",
@@ -41,25 +101,26 @@ def fetch_news_articles(ticker: str):
             detail=payload.get("message", "Failed to fetch news articles."),
         )
 
-    analyzer = SentimentIntensityAnalyzer()
     articles = []
 
     for article in payload.get("articles", []):
         title = article.get("title", "")
         description = article.get("description", "")
         text = f"{title}. {description}".strip()
-        sentiment = analyzer.polarity_scores(text)["compound"] if text else 0.0
+        sentiment = _sentiment_analyzer.polarity_scores(text)["compound"] if text else 0.0
 
-        articles.append(
-            {
-                "title": title,
-                "description": description,
-                "url": article.get("url"),
-                "sentiment": sentiment,
-            }
-        )
+        enriched_article = {
+            "title": title,
+            "description": description,
+            "url": article.get("url"),
+            "published_at": article.get("publishedAt"),
+            "source_name": (article.get("source") or {}).get("name"),
+            "sentiment": round(sentiment, 4),
+        }
+        articles.append(enrich_news_article(ticker, enriched_article))
 
-    return articles
+    deduped_articles = dedupe_articles(articles)
+    return attach_article_clusters(deduped_articles)
 
 
 def normalize_article_key(article: dict):
@@ -91,6 +152,138 @@ def dedupe_articles(articles: list):
     return deduped
 
 
+def normalize_generated_summary(text: str):
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def extract_entities(text: str, ticker: str):
+    normalized_text = normalize_generated_summary(text)
+    if not normalized_text:
+        return []
+
+    raw_entities = re.findall(r"\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b", normalized_text)
+    filtered_entities = []
+
+    for entity in raw_entities:
+        cleaned = entity.strip()
+        if cleaned.upper() == ticker.upper():
+            filtered_entities.append(cleaned.upper())
+            continue
+        if cleaned.lower() in STOPWORDS:
+            continue
+        filtered_entities.append(cleaned)
+
+    counts = Counter(filtered_entities)
+    ranked_entities = [
+        {"name": name, "count": count}
+        for name, count in counts.most_common(6)
+    ]
+    return ranked_entities
+
+
+def infer_topic_cluster(article: dict):
+    text = " ".join(
+        filter(
+            None,
+            [article.get("title", ""), article.get("description", ""), article.get("content", "")],
+        )
+    ).lower()
+
+    cluster_rules = {
+        "earnings": {"earnings", "revenue", "profit", "guidance", "forecast", "quarter"},
+        "analyst": {"upgrade", "downgrade", "rating", "target", "analyst"},
+        "deal": {"acquisition", "merger", "partnership", "deal", "buyout"},
+        "product": {"launch", "product", "release", "device", "platform", "chip"},
+        "regulation": {"regulator", "investigation", "lawsuit", "antitrust", "policy"},
+        "macro": {"rates", "inflation", "economy", "fed", "tariff", "jobs"},
+    }
+
+    for cluster_name, keywords in cluster_rules.items():
+        if any(keyword in text for keyword in keywords):
+            return cluster_name
+
+    return "general"
+
+
+def score_source_quality(url: str | None, source_name: str | None):
+    if not url:
+        return 0.45
+
+    hostname = urlparse(url).hostname or ""
+    hostname = hostname.lower().removeprefix("www.")
+    score = HIGH_QUALITY_DOMAINS.get(hostname, 0.65)
+
+    if source_name and "press release" in source_name.lower():
+        score = min(score, 0.55)
+
+    return round(score, 2)
+
+
+def score_news_impact(article: dict):
+    text = " ".join(
+        filter(
+            None,
+            [article.get("title", ""), article.get("description", ""), article.get("content", "")],
+        )
+    ).lower()
+    sentiment = abs(float(article.get("sentiment") or 0))
+    entity_weight = min(len(article.get("entities") or []), 4) * 0.08
+    source_weight = float(article.get("source_quality_score") or 0) * 0.35
+
+    keyword_weight = 0.0
+    if any(term in text for term in {"earnings", "guidance", "forecast", "revenue"}):
+        keyword_weight += 0.28
+    if any(term in text for term in {"merger", "acquisition", "lawsuit", "investigation"}):
+        keyword_weight += 0.24
+    if any(term in text for term in {"launch", "chip", "ai", "contract", "deal"}):
+        keyword_weight += 0.16
+
+    impact_score = min(1.0, round((sentiment * 0.45) + entity_weight + source_weight + keyword_weight, 2))
+    if impact_score >= 0.75:
+        impact_label = "high"
+    elif impact_score >= 0.45:
+        impact_label = "medium"
+    else:
+        impact_label = "low"
+
+    return impact_score, impact_label
+
+
+def enrich_news_article(ticker: str, article: dict):
+    article_text = " ".join(
+        filter(None, [article.get("title"), article.get("description")]),
+    ).strip()
+    entities = extract_entities(article_text, ticker)
+    source_quality_score = score_source_quality(article.get("url"), article.get("source_name"))
+
+    enriched_article = {
+        **article,
+        "entities": entities,
+        "source_quality_score": source_quality_score,
+        "cluster": infer_topic_cluster(article),
+    }
+    impact_score, impact_label = score_news_impact(enriched_article)
+    enriched_article["impact_score"] = impact_score
+    enriched_article["impact_label"] = impact_label
+    return enriched_article
+
+
+def attach_article_clusters(articles: list[dict]):
+    cluster_counts = Counter(article.get("cluster", "general") for article in articles)
+    clustered_articles = []
+
+    for article in articles:
+        cluster_name = article.get("cluster", "general")
+        clustered_articles.append(
+            {
+                **article,
+                "cluster_article_count": cluster_counts[cluster_name],
+            }
+        )
+
+    return clustered_articles
+
+
 def enrich_article_content(article: dict):
     enriched = dict(article)
     url = article.get("url")
@@ -120,10 +313,67 @@ def enrich_article_content(article: dict):
     ).strip()
 
     enriched["content"] = article_text or fallback_text
+    if not enriched.get("entities"):
+        enriched["entities"] = extract_entities(enriched["content"], "")
     return enriched
 
 
+def summarize_cluster_distribution(articles: list[dict]):
+    cluster_counts = Counter(article.get("cluster", "general") for article in articles)
+    return [
+        {"cluster": cluster, "article_count": count}
+        for cluster, count in cluster_counts.most_common()
+    ]
+
+
+def build_news_metrics(ticker: str, articles: list[dict]):
+    if not articles:
+        return {
+            "ticker": ticker,
+            "avg_sentiment": 0.0,
+            "avg_impact_score": 0.0,
+            "avg_source_quality_score": 0.0,
+            "impact_label": "low",
+            "top_entities": [],
+            "clusters": [],
+        }
+
+    avg_sentiment = sum(float(article.get("sentiment") or 0) for article in articles) / len(articles)
+    avg_impact_score = sum(float(article.get("impact_score") or 0) for article in articles) / len(articles)
+    avg_source_quality = (
+        sum(float(article.get("source_quality_score") or 0) for article in articles) / len(articles)
+    )
+
+    entity_counts = Counter()
+    for article in articles:
+        for entity in article.get("entities") or []:
+            name = entity["name"] if isinstance(entity, dict) else str(entity)
+            entity_counts[name] += entity.get("count", 1) if isinstance(entity, dict) else 1
+
+    if avg_impact_score >= 0.75:
+        impact_label = "high"
+    elif avg_impact_score >= 0.45:
+        impact_label = "medium"
+    else:
+        impact_label = "low"
+
+    return {
+        "ticker": ticker,
+        "avg_sentiment": round(avg_sentiment, 4),
+        "avg_impact_score": round(avg_impact_score, 4),
+        "avg_source_quality_score": round(avg_source_quality, 4),
+        "impact_label": impact_label,
+        "top_entities": [
+            {"name": name, "count": count}
+            for name, count in entity_counts.most_common(8)
+        ],
+        "clusters": summarize_cluster_distribution(articles),
+    }
+
+
 def build_fallback_summary(ticker: str, articles, reason: str | None = None):
+    metrics = build_news_metrics(ticker, articles)
+
     if not articles:
         message = f"No recent articles were available to summarize for {ticker}."
         if reason:
@@ -135,9 +385,10 @@ def build_fallback_summary(ticker: str, articles, reason: str | None = None):
             "source": "fallback",
             "model": None,
             "fallback_reason": reason or "No articles available",
+            "metrics": metrics,
         }
 
-    avg_sentiment = sum(article["sentiment"] for article in articles) / len(articles)
+    avg_sentiment = metrics["avg_sentiment"]
     sentiment_label = (
         "positive" if avg_sentiment > 0.2 else "negative" if avg_sentiment < -0.2 else "mixed"
     )
@@ -147,7 +398,9 @@ def build_fallback_summary(ticker: str, articles, reason: str | None = None):
 
     summary = (
         f"Recent coverage for {ticker} is {sentiment_label} overall based on "
-        f"{len(articles)} articles. Key headlines include: {top_headlines}."
+        f"{len(articles)} articles. Impact is {metrics['impact_label']} with "
+        f"source quality averaging {metrics['avg_source_quality_score']:.2f}. "
+        f"Key headlines include: {top_headlines}."
     )
 
     if reason:
@@ -159,11 +412,8 @@ def build_fallback_summary(ticker: str, articles, reason: str | None = None):
         "source": "fallback",
         "model": None,
         "fallback_reason": reason or "Local summary unavailable",
+        "metrics": metrics,
     }
-
-
-def normalize_generated_summary(text: str):
-    return re.sub(r"\s+", " ", text or "").strip()
 
 
 def is_low_quality_summary(ticker: str, summary_text: str):
@@ -234,9 +484,8 @@ def summarize_text(text: str, max_length: int, min_length: int):
 
 
 def build_market_summary_input(ticker: str, article_notes: list, enriched_articles: list):
-    avg_sentiment = sum(article["sentiment"] for article in enriched_articles) / len(
-        enriched_articles
-    )
+    metrics = build_news_metrics(ticker, enriched_articles)
+    avg_sentiment = metrics["avg_sentiment"]
     sentiment_label = (
         "positive" if avg_sentiment > 0.2 else "negative" if avg_sentiment < -0.2 else "mixed"
     )
@@ -246,12 +495,20 @@ def build_market_summary_input(ticker: str, article_notes: list, enriched_articl
         for article in enriched_articles[:5]
         if article.get("title")
     )
+    clusters_block = ", ".join(
+        f"{cluster['cluster']} ({cluster['article_count']})"
+        for cluster in metrics["clusters"][:4]
+    )
+    entities_block = ", ".join(entity["name"] for entity in metrics["top_entities"][:6])
     return (
         f"Ticker: {ticker}\n"
         f"Overall sentiment: {sentiment_label}\n"
+        f"Average impact: {metrics['impact_label']}\n"
+        f"Dominant clusters: {clusters_block}\n"
+        f"Named entities: {entities_block}\n"
         f"Top headlines:\n{titles_block}\n"
         f"Article summaries:\n{notes_block}\n"
-        "Summarize the main drivers, risks, and overall direction in 2-3 sentences."
+        "Summarize the main drivers, risks, and likely market impact in 2-3 sentences."
     )
 
 
@@ -318,6 +575,9 @@ def summarize_news_with_local_model(ticker: str, articles):
             "source": "local_model",
             "model": settings.local_summarizer_model,
             "fallback_reason": None,
+            "metrics": build_news_metrics(ticker, usable_articles),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         return build_fallback_summary(ticker, articles, str(exc))
