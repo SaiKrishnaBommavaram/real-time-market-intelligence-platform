@@ -101,6 +101,120 @@ class MarketRepository:
         conn.close()
         return rows
 
+    def fetch_top_movers(self, limit: int = 10):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH latest_trade_date AS (
+                SELECT MAX(trade_date) AS trade_date
+                FROM analytics.daily_stock_summary
+            )
+            SELECT
+                ticker,
+                trade_date,
+                close_price,
+                previous_close_price,
+                price_change_pct,
+                total_volume,
+                volume_vs_avg_ratio,
+                anomaly_flag
+            FROM analytics.daily_stock_summary
+            WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
+            ORDER BY ABS(price_change_pct) DESC, total_volume DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_market_volatility(self, limit: int = 30):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ticker,
+                ROUND(STDDEV_POP(price_change_pct), 4) AS volatility_score,
+                ROUND(AVG(ABS(price_change_pct)), 4) AS avg_absolute_move_pct,
+                ROUND(MAX(ABS(price_change_pct)), 4) AS max_absolute_move_pct,
+                COUNT(*) AS observed_days
+            FROM analytics.daily_stock_summary
+            GROUP BY ticker
+            HAVING COUNT(*) >= 2
+            ORDER BY volatility_score DESC NULLS LAST, avg_absolute_move_pct DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_ticker_correlation(self, ticker: str, limit: int = 8):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH target_ticker AS (
+                SELECT
+                    trade_date,
+                    price_change_pct
+                FROM analytics.daily_stock_summary
+                WHERE ticker = %s
+            )
+            SELECT
+                candidate.ticker,
+                ROUND(CORR(target.price_change_pct, candidate.price_change_pct), 4) AS correlation,
+                COUNT(*) AS overlapping_days
+            FROM analytics.daily_stock_summary AS candidate
+            INNER JOIN target_ticker AS target
+                ON candidate.trade_date = target.trade_date
+            WHERE candidate.ticker <> %s
+            GROUP BY candidate.ticker
+            HAVING COUNT(*) >= 2
+            ORDER BY ABS(CORR(target.price_change_pct, candidate.price_change_pct)) DESC NULLS LAST
+            LIMIT %s;
+            """,
+            (ticker, ticker, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_sentiment_over_time(self, ticker: str, limit: int = 30):
+        self.verify_stock_search_cache_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ticker,
+                cache_date,
+                ROUND(AVG(COALESCE((article ->> 'sentiment')::numeric, 0)), 4) AS avg_sentiment,
+                ROUND(AVG(COALESCE((article ->> 'impact_score')::numeric, 0)), 4) AS avg_impact_score,
+                ROUND(AVG(COALESCE((article ->> 'source_quality_score')::numeric, 0)), 4) AS avg_source_quality_score,
+                COUNT(*) AS article_count
+            FROM stock_search_cache
+            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(news_articles, '[]'::jsonb)) AS article
+            WHERE ticker = %s
+            GROUP BY ticker, cache_date
+            ORDER BY cache_date DESC
+            LIMIT %s;
+            """,
+            (ticker, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
     def get_daily_stock_search_cache(self, ticker: str):
         self.verify_stock_search_cache_table()
 
