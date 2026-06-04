@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from api.repositories.market_repository import market_repository
 from api.services.news_service import (
     build_fallback_summary,
+    build_news_metrics,
     fetch_news_articles,
     is_low_quality_summary,
     summarize_news_with_local_model,
@@ -26,6 +27,10 @@ class MarketService:
                 "/stocks/{ticker}/live",
                 "/stocks/{ticker}/news",
                 "/stocks/{ticker}/news/summary",
+                "/analytics/movers",
+                "/analytics/volatility",
+                "/analytics/sentiment/{ticker}",
+                "/analytics/correlations/{ticker}",
             ],
         }
 
@@ -129,6 +134,10 @@ class MarketService:
             return {
                 "ticker": normalized_ticker,
                 "articles": cached_row["news_articles"] or [],
+                "metrics": build_news_metrics(
+                    normalized_ticker,
+                    cached_row["news_articles"] or [],
+                ),
                 "source": "daily_cache",
             }
 
@@ -139,6 +148,7 @@ class MarketService:
         return {
             "ticker": normalized_ticker,
             "articles": articles,
+            "metrics": summary.get("metrics") or build_news_metrics(normalized_ticker, articles),
             "source": "newsapi",
         }
 
@@ -159,6 +169,10 @@ class MarketService:
                     "model": cached_row["summary_model"],
                     "fallback_reason": cached_row["summary_fallback_reason"],
                     "article_count": len(cached_row["news_articles"] or []),
+                    "metrics": build_news_metrics(
+                        normalized_ticker,
+                        cached_row["news_articles"] or [],
+                    ),
                 }
 
             if cached_row and cached_row.get("news_articles"):
@@ -178,6 +192,40 @@ class MarketService:
             summary = build_fallback_summary(normalized_ticker, [], str(exc))
             summary["article_count"] = 0
             return summary
+
+    def get_top_movers(self, limit: int = 10):
+        rows = self.repository.fetch_top_movers(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_market_volatility(self, limit: int = 30):
+        rows = self.repository.fetch_market_volatility(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_sentiment_over_time(self, ticker: str, limit: int = 30):
+        normalized_ticker = ticker.upper()
+        rows = self.repository.fetch_sentiment_over_time(normalized_ticker, limit=limit)
+
+        return {
+            "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_ticker_correlation(self, ticker: str, limit: int = 8):
+        normalized_ticker = ticker.upper()
+        rows = self.repository.fetch_ticker_correlation(normalized_ticker, limit=limit)
+
+        return {
+            "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
 
 
 market_service = MarketService(market_repository)
