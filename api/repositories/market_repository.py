@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from psycopg2.extras import Json
 
 from api.database import get_db_connection
+from api.config import settings
 
 
 class MarketRepository:
@@ -11,6 +12,9 @@ class MarketRepository:
 
     def _get_today_cache_date(self):
         return datetime.now(timezone.utc).date()
+
+    def _get_expiry_time(self, ttl_minutes: int):
+        return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
 
     def verify_stock_search_cache_table(self):
         if self._search_cache_table_verified:
@@ -224,14 +228,43 @@ class MarketRepository:
             """
             SELECT *
             FROM stock_search_cache
-            WHERE ticker = %s AND cache_date = %s;
+            WHERE ticker = %s
+            ORDER BY cache_date DESC, updated_at DESC
+            LIMIT 1;
             """,
-            (ticker, self._get_today_cache_date()),
+            (ticker,),
         )
         row = cur.fetchone()
         cur.close()
         conn.close()
         return row
+
+    def get_cache_status(self, row: dict | None, expires_field: str, updated_field: str):
+        if not row:
+            return {
+                "state": "miss",
+                "is_stale": True,
+                "expires_at": None,
+                "updated_at": None,
+                "stale_by_seconds": None,
+            }
+
+        now = datetime.now(timezone.utc)
+        expires_at = row.get(expires_field)
+        updated_at = row.get(updated_field)
+        is_stale = expires_at is None or expires_at <= now
+        stale_by_seconds = None
+
+        if expires_at and is_stale:
+            stale_by_seconds = max(int((now - expires_at).total_seconds()), 0)
+
+        return {
+            "state": "stale" if is_stale else "fresh",
+            "is_stale": is_stale,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "stale_by_seconds": stale_by_seconds,
+        }
 
     def upsert_live_stock_cache(self, ticker: str, payload: dict):
         self.verify_stock_search_cache_table()
@@ -247,16 +280,18 @@ class MarketRepository:
                 live_volume,
                 live_event_time,
                 live_source,
+                live_expires_at,
                 live_updated_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (ticker, cache_date)
             DO UPDATE SET
                 live_price = EXCLUDED.live_price,
                 live_volume = EXCLUDED.live_volume,
                 live_event_time = EXCLUDED.live_event_time,
                 live_source = EXCLUDED.live_source,
+                live_expires_at = EXCLUDED.live_expires_at,
                 live_updated_at = NOW(),
                 updated_at = NOW();
             """,
@@ -267,6 +302,7 @@ class MarketRepository:
                 payload["volume"],
                 payload["event_time"],
                 payload["source"],
+                self._get_expiry_time(settings.live_cache_ttl_minutes),
             ),
         )
         conn.commit()
@@ -288,10 +324,12 @@ class MarketRepository:
                 summary_source,
                 summary_model,
                 summary_fallback_reason,
+                news_expires_at,
+                news_summary_expires_at,
                 news_updated_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             ON CONFLICT (ticker, cache_date)
             DO UPDATE SET
                 news_articles = EXCLUDED.news_articles,
@@ -299,6 +337,8 @@ class MarketRepository:
                 summary_source = EXCLUDED.summary_source,
                 summary_model = EXCLUDED.summary_model,
                 summary_fallback_reason = EXCLUDED.summary_fallback_reason,
+                news_expires_at = EXCLUDED.news_expires_at,
+                news_summary_expires_at = EXCLUDED.news_summary_expires_at,
                 news_updated_at = NOW(),
                 updated_at = NOW();
             """,
@@ -310,6 +350,8 @@ class MarketRepository:
                 summary["source"],
                 summary["model"],
                 summary["fallback_reason"],
+                self._get_expiry_time(settings.news_cache_ttl_minutes),
+                self._get_expiry_time(settings.news_summary_cache_ttl_minutes),
             ),
         )
         conn.commit()
