@@ -66,6 +66,7 @@ cp .env.example .env
 
 Important variables:
 
+- `MARKET_ENV`, `MARKET_DEBUG`, `LOG_LEVEL`: environment selection and runtime verbosity. Use `local`, `dev`, or `prod`.
 - `MARKET_DB_*`: PostgreSQL connection
 - `MARKET_KAFKA_*`: Kafka connection and topic
 - `MARKET_S3_*`: MinIO/S3 connection and bucket
@@ -76,9 +77,17 @@ Important variables:
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
 - `MARKET_API_KEY`: optional shared API key for protecting non-health API routes
 - `MARKET_RATE_LIMIT_MAX_REQUESTS`, `MARKET_RATE_LIMIT_WINDOW_SECONDS`: in-memory per-client API rate limits
+- `MARKET_LIVE_CACHE_TTL_MINUTES`, `MARKET_NEWS_CACHE_TTL_MINUTES`, `MARKET_NEWS_SUMMARY_CACHE_TTL_MINUTES`: explicit cache freshness windows for live quotes, raw news, and summarized news
+- `MARKET_ALLOW_STALE_CACHE_FALLBACK`: whether stale cached data may be served when upstream refresh fails
 - `VITE_API_BASE_URL`: frontend API base URL
 - `VITE_API_KEY`: frontend API key header value when `MARKET_API_KEY` is enabled
 - `ALLOWED_ORIGINS` and `ALLOWED_ORIGIN_REGEX`: backend CORS
+
+Environment guidance:
+
+- `local`: permissive defaults for local development
+- `dev`: non-production shared environment
+- `prod`: validates stronger requirements, including non-default DB credentials, configured API auth, configured news API key, and non-localhost CORS origins
 
 ### 2. Start the infrastructure stack
 
@@ -252,6 +261,8 @@ Additional analytics routes:
 - `/analytics/volatility`
 - `/analytics/sentiment/{ticker}`
 - `/analytics/correlations/{ticker}`
+
+Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
 ### 10. Start the frontend
 
