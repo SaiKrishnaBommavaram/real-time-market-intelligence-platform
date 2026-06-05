@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import yfinance as yf
 from fastapi import HTTPException
 
+from api.config import settings
 from api.repositories.market_repository import market_repository
 from api.services.news_service import (
     build_fallback_summary,
@@ -16,6 +17,19 @@ from api.services.news_service import (
 class MarketService:
     def __init__(self, repository):
         self.repository = repository
+
+    def _build_cache_metadata(self, row: dict | None, expires_field: str, updated_field: str):
+        return self.repository.get_cache_status(row, expires_field, updated_field)
+
+    def _build_fresh_cache_metadata(self, ttl_minutes: int):
+        expires_at = datetime.now(timezone.utc).timestamp() + (ttl_minutes * 60)
+        return {
+            "state": "fresh",
+            "is_stale": False,
+            "expires_at": datetime.fromtimestamp(expires_at, timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "stale_by_seconds": None,
+        }
 
     def get_root_payload(self):
         return {
@@ -67,6 +81,12 @@ class MarketService:
 
     def get_live_stock_data(self, ticker: str):
         normalized_ticker = ticker.strip().upper()
+        cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+        live_cache = self._build_cache_metadata(
+            cached_row,
+            "live_expires_at",
+            "live_updated_at",
+        )
 
         try:
             stock = yf.Ticker(normalized_ticker)
@@ -94,6 +114,7 @@ class MarketService:
                 "volume": int(volume or 0),
                 "event_time": datetime.now(timezone.utc).isoformat(),
                 "source": "yfinance_live_api",
+                "cache": self._build_fresh_cache_metadata(settings.live_cache_ttl_minutes),
             }
             self.repository.upsert_live_stock_cache(normalized_ticker, payload)
             return payload
@@ -101,14 +122,18 @@ class MarketService:
         except HTTPException:
             raise
         except Exception as exc:
-            cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
-            if cached_row and cached_row.get("live_price") is not None:
+            if (
+                settings.allow_stale_cache_fallback
+                and cached_row
+                and cached_row.get("live_price") is not None
+            ):
                 return {
                     "ticker": normalized_ticker,
                     "price": round(float(cached_row["live_price"]), 2),
                     "volume": int(cached_row.get("live_volume") or 0),
                     "event_time": cached_row["live_event_time"].isoformat(),
-                    "source": "daily_cache",
+                    "source": "daily_cache_stale",
+                    "cache": live_cache,
                 }
 
             error_message = str(exc)
@@ -130,7 +155,16 @@ class MarketService:
     def get_stock_news(self, ticker: str):
         normalized_ticker = ticker.upper()
         cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
-        if cached_row and cached_row.get("news_articles"):
+        news_cache = self._build_cache_metadata(
+            cached_row,
+            "news_expires_at",
+            "news_updated_at",
+        )
+        if (
+            cached_row
+            and cached_row.get("news_articles")
+            and not news_cache["is_stale"]
+        ):
             return {
                 "ticker": normalized_ticker,
                 "articles": cached_row["news_articles"] or [],
@@ -139,27 +173,52 @@ class MarketService:
                     cached_row["news_articles"] or [],
                 ),
                 "source": "daily_cache",
+                "cache": news_cache,
             }
 
-        articles = fetch_news_articles(normalized_ticker)
-        summary = summarize_news_with_local_model(normalized_ticker, articles)
-        self.repository.upsert_news_cache(normalized_ticker, articles, summary)
+        try:
+            articles = fetch_news_articles(normalized_ticker)
+            summary = summarize_news_with_local_model(normalized_ticker, articles)
+            self.repository.upsert_news_cache(normalized_ticker, articles, summary)
 
-        return {
-            "ticker": normalized_ticker,
-            "articles": articles,
-            "metrics": summary.get("metrics") or build_news_metrics(normalized_ticker, articles),
-            "source": "newsapi",
-        }
+            return {
+                "ticker": normalized_ticker,
+                "articles": articles,
+                "metrics": summary.get("metrics") or build_news_metrics(normalized_ticker, articles),
+                "source": "newsapi",
+                "cache": self._build_fresh_cache_metadata(settings.news_cache_ttl_minutes),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if settings.allow_stale_cache_fallback and cached_row and cached_row.get("news_articles"):
+                return {
+                    "ticker": normalized_ticker,
+                    "articles": cached_row["news_articles"] or [],
+                    "metrics": build_news_metrics(
+                        normalized_ticker,
+                        cached_row["news_articles"] or [],
+                    ),
+                    "source": "daily_cache_stale",
+                    "cache": news_cache,
+                    "fallback_reason": f"Served stale cache because refresh failed: {exc}",
+                }
+            raise
 
     def get_stock_news_summary(self, ticker: str):
         normalized_ticker = ticker.upper()
 
         try:
             cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+            news_summary_cache = self._build_cache_metadata(
+                cached_row,
+                "news_summary_expires_at",
+                "news_updated_at",
+            )
             if (
                 cached_row
                 and cached_row.get("news_summary")
+                and not news_summary_cache["is_stale"]
                 and not is_low_quality_summary(normalized_ticker, cached_row["news_summary"])
             ):
                 return {
@@ -173,6 +232,7 @@ class MarketService:
                         normalized_ticker,
                         cached_row["news_articles"] or [],
                     ),
+                    "cache": news_summary_cache,
                 }
 
             if cached_row and cached_row.get("news_articles"):
@@ -183,14 +243,51 @@ class MarketService:
             summary = summarize_news_with_local_model(normalized_ticker, articles)
             self.repository.upsert_news_cache(normalized_ticker, articles, summary)
             summary["article_count"] = len(articles)
+            summary["cache"] = self._build_fresh_cache_metadata(
+                settings.news_summary_cache_ttl_minutes,
+            )
             return summary
         except HTTPException as exc:
             summary = build_fallback_summary(normalized_ticker, [], exc.detail)
             summary["article_count"] = 0
+            summary["cache"] = {
+                "state": "miss",
+                "is_stale": True,
+                "expires_at": None,
+                "updated_at": None,
+                "stale_by_seconds": None,
+            }
             return summary
         except Exception as exc:
+            cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+            news_summary_cache = self._build_cache_metadata(
+                cached_row,
+                "news_summary_expires_at",
+                "news_updated_at",
+            )
+            if (
+                settings.allow_stale_cache_fallback
+                and cached_row
+                and cached_row.get("news_summary")
+                and not is_low_quality_summary(normalized_ticker, cached_row["news_summary"])
+            ):
+                return {
+                    "ticker": normalized_ticker,
+                    "summary": cached_row["news_summary"],
+                    "source": "daily_cache_stale",
+                    "model": cached_row["summary_model"],
+                    "fallback_reason": f"Served stale cache because refresh failed: {exc}",
+                    "article_count": len(cached_row["news_articles"] or []),
+                    "metrics": build_news_metrics(
+                        normalized_ticker,
+                        cached_row["news_articles"] or [],
+                    ),
+                    "cache": news_summary_cache,
+                }
+
             summary = build_fallback_summary(normalized_ticker, [], str(exc))
             summary["article_count"] = 0
+            summary["cache"] = news_summary_cache
             return summary
 
     def get_top_movers(self, limit: int = 10):
