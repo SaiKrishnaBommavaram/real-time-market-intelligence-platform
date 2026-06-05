@@ -43,17 +43,25 @@ CREATE TABLE IF NOT EXISTS public.stock_search_cache (
     live_volume BIGINT,
     live_event_time TIMESTAMPTZ,
     live_source VARCHAR(100),
+    live_expires_at TIMESTAMPTZ,
     news_articles JSONB,
     news_summary TEXT,
     summary_source VARCHAR(100),
     summary_model VARCHAR(255),
     summary_fallback_reason TEXT,
+    news_expires_at TIMESTAMPTZ,
+    news_summary_expires_at TIMESTAMPTZ,
     live_updated_at TIMESTAMPTZ,
     news_updated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE (ticker, cache_date)
 );
+
+ALTER TABLE public.stock_search_cache
+ADD COLUMN IF NOT EXISTS live_expires_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS news_expires_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS news_summary_expires_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_stock_search_cache_ticker_cache_date
 ON public.stock_search_cache (ticker, cache_date DESC);
