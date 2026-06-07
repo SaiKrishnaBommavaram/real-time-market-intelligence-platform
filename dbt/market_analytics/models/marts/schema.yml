@@ -80,3 +80,117 @@ models:
     tests:
       - unique:
           column_name: "ticker || '-' || interval_start::text"
+  - name: stock_drawdown_recovery
+    description: "Daily drawdown and recovery state by ticker."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: close_price
+        tests:
+          - not_null
+      - name: rolling_peak_close
+        tests:
+          - not_null
+      - name: drawdown_pct
+        tests:
+          - not_null
+      - name: days_since_peak
+        tests:
+          - not_null
+      - name: recovery_status
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "ticker || '-' || trade_date::text"
+  - name: stock_risk_indicators
+    description: "Rolling 7-day volatility and Sharpe-like indicators by ticker."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: close_price
+        tests:
+          - not_null
+      - name: price_change_pct
+        tests:
+          - not_null
+      - name: observed_days
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "ticker || '-' || trade_date::text"
+  - name: sector_daily_summary
+    description: "Sector-level daily aggregates for mapped tracked tickers."
+    columns:
+      - name: sector
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: ticker_count
+        tests:
+          - not_null
+      - name: avg_price_change_pct
+        tests:
+          - not_null
+      - name: avg_volume_ratio
+        tests:
+          - not_null
+      - name: total_volume
+        tests:
+          - not_null
+      - name: anomaly_count
+        tests:
+          - not_null
+      - name: top_ticker
+        tests:
+          - not_null
+      - name: top_ticker_price_change_pct
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "sector || '-' || trade_date::text"
+  - name: stock_anomaly_history
+    description: "History of non-normal daily anomalies with severity scoring."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: anomaly_flag
+        tests:
+          - not_null
+      - name: anomaly_severity_score
+        tests:
+          - not_null
+      - name: price_change_pct
+        tests:
+          - not_null
+      - name: volume_vs_avg_ratio
+        tests:
+          - not_null
+      - name: close_price
+        tests:
+          - not_null
+      - name: total_volume
+        tests:
+          - not_null
