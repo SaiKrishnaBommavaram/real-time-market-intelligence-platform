@@ -241,6 +241,10 @@ The dbt project now includes:
 - singular tests for duplicate raw events and invalid summary price bounds
 - hourly intraday rollups in `analytics.intraday_stock_rollup`
 - daily anomaly fields such as `price_change_pct`, `volume_vs_avg_ratio`, and `anomaly_flag`
+- drawdown and recovery analytics in `analytics.stock_drawdown_recovery`
+- rolling volatility and Sharpe-like indicators in `analytics.stock_risk_indicators`
+- sector-level daily aggregates in `analytics.sector_daily_summary`
+- anomaly history records in `analytics.stock_anomaly_history`
 
 ### 9. Start the API
 
@@ -261,6 +265,10 @@ Additional analytics routes:
 - `/analytics/volatility`
 - `/analytics/sentiment/{ticker}`
 - `/analytics/correlations/{ticker}`
+- `/analytics/drawdowns`
+- `/analytics/risk`
+- `/analytics/sectors`
+- `/analytics/anomalies`
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
