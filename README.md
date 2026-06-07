@@ -427,7 +427,7 @@ The AWS split deployment path in this repo is:
 
 Details: [aws/README.md](/Users/saikrishnabommavaram/Downloads/real-time-market-intelligence-platform/aws/README.md)
 
-## Troubleshooting
+## Troubleshooting steps:
 
 ### `dbt run` succeeds but the API still fails on `/market/summary`
 
