@@ -191,6 +191,145 @@ class MarketRepository:
         conn.close()
         return rows
 
+    def fetch_drawdown_recovery(self, limit: int = 30):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH latest_per_ticker AS (
+                SELECT DISTINCT ON (ticker)
+                    ticker,
+                    trade_date,
+                    close_price,
+                    rolling_peak_close,
+                    drawdown_pct,
+                    days_since_peak,
+                    recovery_status,
+                    last_updated_at
+                FROM analytics.stock_drawdown_recovery
+                ORDER BY ticker, trade_date DESC
+            )
+            SELECT *
+            FROM latest_per_ticker
+            ORDER BY ABS(drawdown_pct) DESC, days_since_peak DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_risk_indicators(self, limit: int = 30):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH latest_per_ticker AS (
+                SELECT DISTINCT ON (ticker)
+                    ticker,
+                    trade_date,
+                    close_price,
+                    price_change_pct,
+                    rolling_return_7d_pct,
+                    rolling_volatility_7d,
+                    sharpe_like_ratio_7d,
+                    observed_days,
+                    last_updated_at
+                FROM analytics.stock_risk_indicators
+                ORDER BY ticker, trade_date DESC
+            )
+            SELECT *
+            FROM latest_per_ticker
+            ORDER BY rolling_volatility_7d DESC NULLS LAST, sharpe_like_ratio_7d ASC NULLS LAST
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_sector_performance(self, limit: int = 20):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH latest_trade_date AS (
+                SELECT MAX(trade_date) AS trade_date
+                FROM analytics.sector_daily_summary
+            )
+            SELECT
+                sector,
+                trade_date,
+                ticker_count,
+                avg_price_change_pct,
+                avg_volume_ratio,
+                total_volume,
+                anomaly_count,
+                top_ticker,
+                top_ticker_price_change_pct
+            FROM analytics.sector_daily_summary
+            WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
+            ORDER BY avg_price_change_pct DESC, total_volume DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_anomaly_history(self, limit: int = 50, ticker: str | None = None):
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if ticker:
+            cur.execute(
+                """
+                SELECT
+                    ticker,
+                    trade_date,
+                    anomaly_flag,
+                    anomaly_severity_score,
+                    price_change_pct,
+                    volume_vs_avg_ratio,
+                    close_price,
+                    total_volume
+                FROM analytics.stock_anomaly_history
+                WHERE ticker = %s
+                ORDER BY trade_date DESC, anomaly_severity_score DESC
+                LIMIT %s;
+                """,
+                (ticker, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT
+                    ticker,
+                    trade_date,
+                    anomaly_flag,
+                    anomaly_severity_score,
+                    price_change_pct,
+                    volume_vs_avg_ratio,
+                    close_price,
+                    total_volume
+                FROM analytics.stock_anomaly_history
+                ORDER BY trade_date DESC, anomaly_severity_score DESC
+                LIMIT %s;
+                """,
+                (limit,),
+            )
+
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
     def fetch_sentiment_over_time(self, ticker: str, limit: int = 30):
         self.verify_stock_search_cache_table()
 
