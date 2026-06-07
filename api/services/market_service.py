@@ -45,6 +45,10 @@ class MarketService:
                 "/analytics/volatility",
                 "/analytics/sentiment/{ticker}",
                 "/analytics/correlations/{ticker}",
+                "/analytics/drawdowns",
+                "/analytics/risk",
+                "/analytics/sectors",
+                "/analytics/anomalies",
             ],
         }
 
@@ -320,6 +324,35 @@ class MarketService:
 
         return {
             "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_drawdown_recovery(self, limit: int = 30):
+        rows = self.repository.fetch_drawdown_recovery(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_risk_indicators(self, limit: int = 30):
+        rows = self.repository.fetch_risk_indicators(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_sector_performance(self, limit: int = 20):
+        rows = self.repository.fetch_sector_performance(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_anomaly_history(self, limit: int = 50, ticker: str | None = None):
+        normalized_ticker = ticker.upper() if ticker else None
+        rows = self.repository.fetch_anomaly_history(limit=limit, ticker=normalized_ticker)
+        return {
             "count": len(rows),
             "data": rows,
         }
