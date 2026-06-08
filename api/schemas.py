@@ -241,3 +241,91 @@ class AnomalyHistoryRow(BaseModel):
 class AnomalyHistoryResponse(BaseModel):
     count: int
     data: list[AnomalyHistoryRow]
+
+
+class IntradayCandleRow(BaseModel):
+    ticker: str
+    interval_start: datetime
+    open_price: float
+    high_price: float
+    low_price: float
+    close_price: float
+    bar_count: int
+    total_volume: int
+    last_updated_at: datetime
+
+
+class IntradayCandlesResponse(BaseModel):
+    ticker: str
+    count: int
+    data: list[IntradayCandleRow]
+
+
+class IntradayMoverRow(BaseModel):
+    ticker: str
+    interval_start: datetime
+    close_price: float
+    previous_close_price: float | None = None
+    interval_change_pct: float | None = None
+    total_volume: int
+    bar_count: int
+
+
+class IntradayMoversResponse(BaseModel):
+    count: int
+    data: list[IntradayMoverRow]
+
+
+class WatchlistItem(BaseModel):
+    ticker: str
+    price_alert_threshold: float
+    volume_alert_threshold: float
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class WatchlistResponse(BaseModel):
+    principal_id: str
+    count: int
+    data: list[WatchlistItem]
+
+
+class WatchlistUpsertRequest(BaseModel):
+    ticker: str
+    price_alert_threshold: float = Field(gt=0)
+    volume_alert_threshold: float = Field(gt=0)
+
+
+class WatchlistAlertHistoryRow(BaseModel):
+    ticker: str
+    trade_date: date
+    close_price: float
+    price_change_pct: float
+    volume_vs_avg_ratio: float
+    anomaly_flag: str
+    price_alert_threshold: float
+    volume_alert_threshold: float
+    triggered_price_alert: bool
+    triggered_volume_alert: bool
+
+
+class WatchlistAlertHistoryResponse(BaseModel):
+    principal_id: str
+    count: int
+    data: list[WatchlistAlertHistoryRow]
+
+
+class DeleteResponse(BaseModel):
+    deleted: bool
+
+
+class MetricsTimingRow(BaseModel):
+    count: int
+    avg_ms: float
+    max_ms: float
+
+
+class ObservabilityResponse(BaseModel):
+    counters: dict[str, int]
+    gauges: dict[str, float | int]
+    timings: dict[str, MetricsTimingRow]
