@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
-from pipeline_runtime import get_logger, retry
+from pipeline_runtime import get_logger, increment_metric, log_metrics_snapshot, retry, set_gauge
 
 try:
     from consumers.event_validation import validate_stock_event
@@ -120,6 +120,7 @@ def main():
             try:
                 event = validate_stock_event(message.value)
             except (TypeError, ValueError) as exc:
+                increment_metric("s3_consumer.invalid_event")
                 logger.warning(
                     "invalid_event_skipped",
                     extra={
@@ -136,6 +137,8 @@ def main():
             try:
                 s3_key = upload_event_to_s3_with_retry(s3_client, event, message)
                 commit_offset(consumer, message, "persisted")
+                increment_metric("s3_consumer.events_persisted")
+                set_gauge("s3_consumer.last_offset", message.offset)
                 logger.info(
                     "event_persisted",
                     extra={
@@ -149,6 +152,7 @@ def main():
                     },
                 )
             except (BotoCoreError, ClientError) as exc:
+                increment_metric("s3_consumer.persist_failed")
                 logger.error(
                     "event_persist_failed",
                     extra={
@@ -161,6 +165,7 @@ def main():
                     },
                     exc_info=exc,
                 )
+            log_metrics_snapshot(logger, "s3_consumer")
 
     except KeyboardInterrupt:
         logger.info("consumer_stopping", extra={"topic": TOPIC_NAME, "sink": "s3"})
