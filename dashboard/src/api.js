@@ -54,3 +54,33 @@ export async function fetchStockNewsSummary(ticker) {
   );
   return response.data;
 }
+
+export async function fetchWatchlist() {
+  const response = await apiClient.get(`${getApiBaseUrl()}/watchlist`);
+  return response.data;
+}
+
+export async function upsertWatchlistItem(payload) {
+  const response = await apiClient.post(`${getApiBaseUrl()}/watchlist`, payload);
+  return response.data;
+}
+
+export async function deleteWatchlistItem(ticker) {
+  const response = await apiClient.delete(`${getApiBaseUrl()}/watchlist/${ticker}`);
+  return response.data;
+}
+
+export async function fetchIntradayMovers() {
+  const response = await apiClient.get(`${getApiBaseUrl()}/analytics/intraday/movers`);
+  return response.data;
+}
+
+export async function fetchIntradayCandles(ticker) {
+  const response = await apiClient.get(`${getApiBaseUrl()}/analytics/intraday/${ticker}`);
+  return response.data;
+}
+
+export async function fetchWatchlistAlerts() {
+  const response = await apiClient.get(`${getApiBaseUrl()}/watchlist/alerts`);
+  return response.data;
+}
