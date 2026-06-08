@@ -8,6 +8,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from api.config import settings
+from api.observability import increment_metric
 
 
 _summarizer_tokenizer = None
@@ -75,27 +76,33 @@ HIGH_QUALITY_DOMAINS = {
 
 def fetch_news_articles(ticker: str):
     if not settings.news_api_key:
+        increment_metric("api.news.config_missing")
         raise HTTPException(
             status_code=503,
             detail="NEWS_API_KEY is not configured.",
         )
 
-    response = requests.get(
-        "https://newsapi.org/v2/everything",
-        params={
-            "q": ticker,
-            "pageSize": 8,
-            "apiKey": settings.news_api_key,
-            "sortBy": "publishedAt",
-            "language": "en",
-        },
-        timeout=15,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            "https://newsapi.org/v2/everything",
+            params={
+                "q": ticker,
+                "pageSize": 8,
+                "apiKey": settings.news_api_key,
+                "sortBy": "publishedAt",
+                "language": "en",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        increment_metric("api.news.provider_failure")
+        raise
 
     payload = response.json()
 
     if payload.get("status") != "ok":
+        increment_metric("api.news.provider_failure")
         raise HTTPException(
             status_code=502,
             detail=payload.get("message", "Failed to fetch news articles."),
@@ -120,6 +127,7 @@ def fetch_news_articles(ticker: str):
         articles.append(enrich_news_article(ticker, enriched_article))
 
     deduped_articles = dedupe_articles(articles)
+    increment_metric("api.news.provider_success")
     return attach_article_clusters(deduped_articles)
 
 
@@ -514,6 +522,7 @@ def build_market_summary_input(ticker: str, article_notes: list, enriched_articl
 
 def summarize_news_with_local_model(ticker: str, articles):
     if not articles:
+        increment_metric("api.news.summary_fallback")
         return build_fallback_summary(ticker, articles, "No articles available")
 
     try:
@@ -524,6 +533,7 @@ def summarize_news_with_local_model(ticker: str, articles):
         ]
 
         if not usable_articles:
+            increment_metric("api.news.summary_fallback")
             return build_fallback_summary(ticker, articles, "Article text was empty")
 
         article_notes = []
@@ -542,6 +552,7 @@ def summarize_news_with_local_model(ticker: str, articles):
                 article_notes.append(article_note)
 
         if not article_notes:
+            increment_metric("api.news.summary_fallback")
             return build_fallback_summary(
                 ticker,
                 articles,
@@ -556,6 +567,7 @@ def summarize_news_with_local_model(ticker: str, articles):
         )
 
         if not summary_text:
+            increment_metric("api.news.summary_fallback")
             return build_fallback_summary(
                 ticker,
                 articles,
@@ -563,12 +575,14 @@ def summarize_news_with_local_model(ticker: str, articles):
             )
 
         if is_low_quality_summary(ticker, summary_text):
+            increment_metric("api.news.summary_fallback")
             return build_fallback_summary(
                 ticker,
                 articles,
                 "Local summarizer echoed the prompt instead of generating a summary",
             )
 
+        increment_metric("api.news.summary_success")
         return {
             "ticker": ticker,
             "summary": summary_text,
@@ -580,4 +594,5 @@ def summarize_news_with_local_model(ticker: str, articles):
     except HTTPException:
         raise
     except Exception as exc:
+        increment_metric("api.news.summary_failure")
         return build_fallback_summary(ticker, articles, str(exc))
