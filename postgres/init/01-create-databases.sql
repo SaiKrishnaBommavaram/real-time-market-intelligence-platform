@@ -65,3 +65,17 @@ ADD COLUMN IF NOT EXISTS news_summary_expires_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_stock_search_cache_ticker_cache_date
 ON public.stock_search_cache (ticker, cache_date DESC);
+
+CREATE TABLE IF NOT EXISTS public.dashboard_watchlists (
+    id SERIAL PRIMARY KEY,
+    principal_id VARCHAR(128) NOT NULL,
+    ticker VARCHAR(10) NOT NULL,
+    price_alert_threshold NUMERIC(10, 2) NOT NULL,
+    volume_alert_threshold NUMERIC(10, 2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (principal_id, ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_watchlists_principal
+ON public.dashboard_watchlists (principal_id, ticker);
