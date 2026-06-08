@@ -3,6 +3,8 @@ import logging
 import random
 import sys
 import time
+from collections import defaultdict
+from threading import Lock
 
 
 class StructuredFormatter(logging.Formatter):
@@ -50,6 +52,11 @@ class StructuredFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+_METRIC_COUNTERS = defaultdict(int)
+_METRIC_GAUGES = {}
+_METRIC_LOCK = Lock()
+
+
 def get_logger(name: str):
     logger = logging.getLogger(name)
     if logger.handlers:
@@ -61,6 +68,36 @@ def get_logger(name: str):
     logger.setLevel(logging.INFO)
     logger.propagate = False
     return logger
+
+
+def increment_metric(name: str, value: int = 1):
+    with _METRIC_LOCK:
+        _METRIC_COUNTERS[name] += value
+
+
+def set_gauge(name: str, value):
+    with _METRIC_LOCK:
+        _METRIC_GAUGES[name] = value
+
+
+def get_metrics_snapshot():
+    with _METRIC_LOCK:
+        return {
+            "counters": dict(_METRIC_COUNTERS),
+            "gauges": dict(_METRIC_GAUGES),
+        }
+
+
+def log_metrics_snapshot(logger, process_name: str):
+    snapshot = get_metrics_snapshot()
+    logger.info(
+        "metrics_snapshot",
+        extra={
+            "process": process_name,
+            "counters": snapshot["counters"],
+            "gauges": snapshot["gauges"],
+        },
+    )
 
 
 def retry(
@@ -79,6 +116,7 @@ def retry(
             return func()
         except exceptions as exc:
             if attempt == max_attempts:
+                increment_metric(f"{operation_name}.failed")
                 logger.error(
                     "operation_failed",
                     extra={
@@ -92,6 +130,7 @@ def retry(
 
             delay_seconds = base_delay_seconds * (2 ** (attempt - 1))
             delay_seconds += random.uniform(0, base_delay_seconds / 4)
+            increment_metric(f"{operation_name}.retry")
             logger.warning(
                 "operation_retry",
                 extra={
