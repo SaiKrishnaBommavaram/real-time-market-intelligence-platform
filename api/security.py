@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 from collections import defaultdict, deque
@@ -7,6 +8,7 @@ from fastapi import Request
 from starlette.responses import JSONResponse
 
 from api.config import settings
+from api.observability import increment_metric
 
 
 logger = logging.getLogger("market.api.security")
@@ -22,6 +24,13 @@ def get_client_identifier(request: Request) -> str:
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def get_principal_id(request: Request) -> str:
+    api_key = request.headers.get(settings.api_key_header)
+    if api_key:
+        return f"api_key:{hashlib.sha256(api_key.encode('utf-8')).hexdigest()[:24]}"
+    return f"anonymous:{get_client_identifier(request)}"
 
 
 class InMemoryRateLimiter:
@@ -66,9 +75,11 @@ rate_limiter = InMemoryRateLimiter(
 
 
 async def enforce_api_key_middleware(request: Request, call_next):
+    request.state.principal_id = get_principal_id(request)
     if settings.api_key and not is_exempt_path(request.url.path):
         provided_api_key = request.headers.get(settings.api_key_header)
         if provided_api_key != settings.api_key:
+            increment_metric("api.auth.failure")
             logger.warning(
                 "authentication_failed",
                 extra={
@@ -81,6 +92,7 @@ async def enforce_api_key_middleware(request: Request, call_next):
                 status_code=401,
                 content={"detail": "Invalid or missing API key."},
             )
+        increment_metric("api.auth.success")
 
     return await call_next(request)
 
@@ -91,6 +103,7 @@ async def rate_limit_middleware(request: Request, call_next):
 
     allowed, headers = rate_limiter.check(get_client_identifier(request))
     if not allowed:
+        increment_metric("api.rate_limit.exceeded")
         logger.warning(
             "rate_limit_exceeded",
             extra={
