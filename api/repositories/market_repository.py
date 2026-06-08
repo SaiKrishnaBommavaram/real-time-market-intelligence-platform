@@ -135,6 +135,81 @@ class MarketRepository:
         conn.close()
         return rows
 
+    def fetch_intraday_candles(self, ticker: str, limit: int = 48):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ticker,
+                interval_start,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                bar_count,
+                total_volume,
+                last_updated_at
+            FROM analytics.intraday_stock_rollup
+            WHERE ticker = %s
+            ORDER BY interval_start DESC
+            LIMIT %s;
+            """,
+            (ticker, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_intraday_movers(self, limit: int = 12):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH ranked AS (
+                SELECT
+                    ticker,
+                    interval_start,
+                    close_price,
+                    total_volume,
+                    bar_count,
+                    LAG(close_price) OVER (
+                        PARTITION BY ticker
+                        ORDER BY interval_start
+                    ) AS previous_close_price,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ticker
+                        ORDER BY interval_start DESC
+                    ) AS row_num
+                FROM analytics.intraday_stock_rollup
+            )
+            SELECT
+                ticker,
+                interval_start,
+                close_price,
+                previous_close_price,
+                ROUND(
+                    CASE
+                        WHEN previous_close_price IS NULL OR previous_close_price = 0 THEN NULL
+                        ELSE ((close_price - previous_close_price) / previous_close_price) * 100
+                    END,
+                    4
+                ) AS interval_change_pct,
+                total_volume,
+                bar_count
+            FROM ranked
+            WHERE row_num = 1
+            ORDER BY ABS(interval_change_pct) DESC NULLS LAST, total_volume DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
     def fetch_market_volatility(self, limit: int = 30):
         conn = get_db_connection()
         cur = conn.cursor()
@@ -325,6 +400,119 @@ class MarketRepository:
                 (limit,),
             )
 
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def fetch_watchlist(self, principal_id: str):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ticker,
+                price_alert_threshold,
+                volume_alert_threshold,
+                created_at,
+                updated_at
+            FROM dashboard_watchlists
+            WHERE principal_id = %s
+            ORDER BY ticker;
+            """,
+            (principal_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
+
+    def upsert_watchlist_item(
+        self,
+        principal_id: str,
+        ticker: str,
+        price_alert_threshold: float,
+        volume_alert_threshold: float,
+    ):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO dashboard_watchlists (
+                principal_id,
+                ticker,
+                price_alert_threshold,
+                volume_alert_threshold,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (principal_id, ticker)
+            DO UPDATE SET
+                price_alert_threshold = EXCLUDED.price_alert_threshold,
+                volume_alert_threshold = EXCLUDED.volume_alert_threshold,
+                updated_at = NOW()
+            RETURNING
+                ticker,
+                price_alert_threshold,
+                volume_alert_threshold,
+                created_at,
+                updated_at;
+            """,
+            (principal_id, ticker, price_alert_threshold, volume_alert_threshold),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return row
+
+    def delete_watchlist_item(self, principal_id: str, ticker: str):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            DELETE FROM dashboard_watchlists
+            WHERE principal_id = %s AND ticker = %s;
+            """,
+            (principal_id, ticker),
+        )
+        deleted_count = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return deleted_count
+
+    def fetch_watchlist_alert_history(self, principal_id: str, limit: int = 50):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                watchlist.ticker,
+                summary.trade_date,
+                summary.close_price,
+                summary.price_change_pct,
+                summary.volume_vs_avg_ratio,
+                summary.anomaly_flag,
+                watchlist.price_alert_threshold,
+                watchlist.volume_alert_threshold,
+                ABS(summary.price_change_pct) >= watchlist.price_alert_threshold AS triggered_price_alert,
+                summary.volume_vs_avg_ratio >= watchlist.volume_alert_threshold AS triggered_volume_alert
+            FROM dashboard_watchlists AS watchlist
+            INNER JOIN analytics.daily_stock_summary AS summary
+                ON watchlist.ticker = summary.ticker
+            WHERE watchlist.principal_id = %s
+            AND (
+                ABS(summary.price_change_pct) >= watchlist.price_alert_threshold
+                OR summary.volume_vs_avg_ratio >= watchlist.volume_alert_threshold
+                OR summary.anomaly_flag <> 'normal'
+            )
+            ORDER BY summary.trade_date DESC, ABS(summary.price_change_pct) DESC
+            LIMIT %s;
+            """,
+            (principal_id, limit),
+        )
         rows = cur.fetchall()
         cur.close()
         conn.close()
