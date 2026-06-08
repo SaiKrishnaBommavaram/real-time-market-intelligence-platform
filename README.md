@@ -25,7 +25,9 @@ An end-to-end market data platform that:
    - ticker news from NewsAPI
    - enriched news analysis with source quality, entity extraction, clustering, and impact scoring
    - local news summaries using a Hugging Face summarization model
-   - analytics endpoints for movers, volatility, sentiment-over-time, and ticker correlation
+   - analytics endpoints for movers, volatility, sentiment-over-time, ticker correlation, and intraday rollups
+   - persisted watchlists and watchlist alert history scoped to the active API principal
+   - an observability metrics snapshot for API cache/auth/request behavior
    - route handlers from `api/routes/`
    - business logic from `api/services/`
    - persistence access from `api/repositories/`
@@ -261,6 +263,8 @@ API docs and health checks:
 
 Additional analytics routes:
 
+- `/analytics/intraday/movers`
+- `/analytics/intraday/{ticker}`
 - `/analytics/movers`
 - `/analytics/volatility`
 - `/analytics/sentiment/{ticker}`
@@ -269,6 +273,18 @@ Additional analytics routes:
 - `/analytics/risk`
 - `/analytics/sectors`
 - `/analytics/anomalies`
+
+Watchlist and observability routes:
+
+- `GET /watchlist`
+- `POST /watchlist`
+- `DELETE /watchlist/{ticker}`
+- `GET /watchlist/alerts`
+- `GET /observability/metrics`
+
+The watchlist routes are scoped to the current request principal. When `MARKET_API_KEY` is enabled, the backend derives a stable profile key from the presented API key and persists watchlist thresholds in PostgreSQL instead of relying only on browser local storage.
+
+The observability endpoint reports API request counts/latency, auth and rate-limit events, cache hit vs stale fallback counters, and news-provider/summarizer counters. Producer and consumer processes now also emit periodic structured metric snapshots in their own logs.
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
