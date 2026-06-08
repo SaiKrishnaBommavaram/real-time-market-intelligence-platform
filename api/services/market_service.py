@@ -4,6 +4,7 @@ import yfinance as yf
 from fastapi import HTTPException
 
 from api.config import settings
+from api.observability import get_metrics_snapshot, increment_metric
 from api.repositories.market_repository import market_repository
 from api.services.news_service import (
     build_fallback_summary,
@@ -41,6 +42,8 @@ class MarketService:
                 "/stocks/{ticker}/live",
                 "/stocks/{ticker}/news",
                 "/stocks/{ticker}/news/summary",
+                "/analytics/intraday/movers",
+                "/analytics/intraday/{ticker}",
                 "/analytics/movers",
                 "/analytics/volatility",
                 "/analytics/sentiment/{ticker}",
@@ -49,6 +52,9 @@ class MarketService:
                 "/analytics/risk",
                 "/analytics/sectors",
                 "/analytics/anomalies",
+                "/watchlist",
+                "/watchlist/alerts",
+                "/observability/metrics",
             ],
         }
 
@@ -131,6 +137,7 @@ class MarketService:
                 and cached_row
                 and cached_row.get("live_price") is not None
             ):
+                increment_metric("api.cache.live.stale_fallback")
                 return {
                     "ticker": normalized_ticker,
                     "price": round(float(cached_row["live_price"]), 2),
@@ -169,6 +176,7 @@ class MarketService:
             and cached_row.get("news_articles")
             and not news_cache["is_stale"]
         ):
+            increment_metric("api.cache.news.hit")
             return {
                 "ticker": normalized_ticker,
                 "articles": cached_row["news_articles"] or [],
@@ -193,9 +201,11 @@ class MarketService:
                 "cache": self._build_fresh_cache_metadata(settings.news_cache_ttl_minutes),
             }
         except HTTPException:
+            increment_metric("api.news.provider.error")
             raise
         except Exception as exc:
             if settings.allow_stale_cache_fallback and cached_row and cached_row.get("news_articles"):
+                increment_metric("api.cache.news.stale_fallback")
                 return {
                     "ticker": normalized_ticker,
                     "articles": cached_row["news_articles"] or [],
@@ -225,6 +235,7 @@ class MarketService:
                 and not news_summary_cache["is_stale"]
                 and not is_low_quality_summary(normalized_ticker, cached_row["news_summary"])
             ):
+                increment_metric("api.cache.news_summary.hit")
                 return {
                     "ticker": normalized_ticker,
                     "summary": cached_row["news_summary"],
@@ -252,6 +263,7 @@ class MarketService:
             )
             return summary
         except HTTPException as exc:
+            increment_metric("api.news.summary.error")
             summary = build_fallback_summary(normalized_ticker, [], exc.detail)
             summary["article_count"] = 0
             summary["cache"] = {
@@ -275,6 +287,7 @@ class MarketService:
                 and cached_row.get("news_summary")
                 and not is_low_quality_summary(normalized_ticker, cached_row["news_summary"])
             ):
+                increment_metric("api.cache.news_summary.stale_fallback")
                 return {
                     "ticker": normalized_ticker,
                     "summary": cached_row["news_summary"],
@@ -293,6 +306,22 @@ class MarketService:
             summary["article_count"] = 0
             summary["cache"] = news_summary_cache
             return summary
+
+    def get_intraday_candles(self, ticker: str, limit: int = 48):
+        normalized_ticker = ticker.upper()
+        rows = self.repository.fetch_intraday_candles(normalized_ticker, limit=limit)
+        return {
+            "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_intraday_movers(self, limit: int = 12):
+        rows = self.repository.fetch_intraday_movers(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+        }
 
     def get_top_movers(self, limit: int = 10):
         rows = self.repository.fetch_top_movers(limit=limit)
@@ -356,6 +385,46 @@ class MarketService:
             "count": len(rows),
             "data": rows,
         }
+
+    def get_watchlist(self, principal_id: str):
+        rows = self.repository.fetch_watchlist(principal_id)
+        return {
+            "principal_id": principal_id,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def upsert_watchlist_item(
+        self,
+        principal_id: str,
+        ticker: str,
+        price_alert_threshold: float,
+        volume_alert_threshold: float,
+    ):
+        row = self.repository.upsert_watchlist_item(
+            principal_id=principal_id,
+            ticker=ticker.upper(),
+            price_alert_threshold=price_alert_threshold,
+            volume_alert_threshold=volume_alert_threshold,
+        )
+        increment_metric("api.watchlist.upsert")
+        return row
+
+    def delete_watchlist_item(self, principal_id: str, ticker: str):
+        deleted_count = self.repository.delete_watchlist_item(principal_id, ticker.upper())
+        increment_metric("api.watchlist.delete")
+        return {"deleted": deleted_count > 0}
+
+    def get_watchlist_alert_history(self, principal_id: str, limit: int = 50):
+        rows = self.repository.fetch_watchlist_alert_history(principal_id, limit=limit)
+        return {
+            "principal_id": principal_id,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    def get_observability_metrics(self):
+        return get_metrics_snapshot()
 
 
 market_service = MarketService(market_repository)
