@@ -5,6 +5,7 @@ import uuid
 from fastapi import Request
 
 from api.config import settings
+from api.observability import increment_metric, observe_timing_ms
 from pipeline_runtime import StructuredFormatter
 
 
@@ -32,6 +33,9 @@ async def log_request_middleware(request: Request, call_next):
         response = await call_next(request)
     except Exception as exc:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        increment_metric("api.request.error")
+        increment_metric(f"api.request.error.{request.method.lower()}")
+        observe_timing_ms("api.request.duration", duration_ms)
         logger.exception(
             "request_failed",
             extra={
@@ -46,6 +50,9 @@ async def log_request_middleware(request: Request, call_next):
         raise exc
 
     duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    increment_metric("api.request.total")
+    increment_metric(f"api.request.status.{response.status_code}")
+    observe_timing_ms("api.request.duration", duration_ms)
     response.headers["x-request-id"] = request_id
     logger.info(
         "request_completed",
