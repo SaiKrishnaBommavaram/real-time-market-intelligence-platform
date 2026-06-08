@@ -1,15 +1,19 @@
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from api.schemas import (
     AnomalyHistoryResponse,
+    DeleteResponse,
     CorrelationResponse,
     DrawdownRecoveryResponse,
     HealthResponse,
+    IntradayCandlesResponse,
+    IntradayMoversResponse,
     LiveStockResponse,
     MarketSummaryResponse,
     MoversResponse,
     NewsSummaryResponse,
+    ObservabilityResponse,
     RiskIndicatorsResponse,
     RootResponse,
     SectorPerformanceResponse,
@@ -17,6 +21,10 @@ from api.schemas import (
     StockNewsResponse,
     StockSummaryResponse,
     VolatilityResponse,
+    WatchlistAlertHistoryResponse,
+    WatchlistItem,
+    WatchlistResponse,
+    WatchlistUpsertRequest,
 )
 from api.services.market_service import market_service
 
@@ -70,6 +78,22 @@ def get_stock_news(ticker: str):
 @router.get("/stocks/{ticker}/news/summary", response_model=NewsSummaryResponse)
 def get_stock_news_summary(ticker: str):
     return market_service.get_stock_news_summary(ticker)
+
+
+@router.get("/analytics/intraday/movers", response_model=IntradayMoversResponse)
+def get_intraday_movers(limit: int = 12):
+    try:
+        return market_service.get_intraday_movers(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/intraday/{ticker}", response_model=IntradayCandlesResponse)
+def get_intraday_candles(ticker: str, limit: int = 48):
+    try:
+        return market_service.get_intraday_candles(ticker, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/analytics/movers", response_model=MoversResponse)
@@ -132,5 +156,50 @@ def get_sector_performance(limit: int = 20):
 def get_anomaly_history(limit: int = 50, ticker: str | None = None):
     try:
         return market_service.get_anomaly_history(limit=limit, ticker=ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/watchlist", response_model=WatchlistResponse)
+def get_watchlist(request: Request):
+    try:
+        return market_service.get_watchlist(request.state.principal_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/watchlist", response_model=WatchlistItem)
+def upsert_watchlist_item(request: Request, payload: WatchlistUpsertRequest):
+    try:
+        return market_service.upsert_watchlist_item(
+            request.state.principal_id,
+            payload.ticker,
+            payload.price_alert_threshold,
+            payload.volume_alert_threshold,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.delete("/watchlist/{ticker}", response_model=DeleteResponse)
+def delete_watchlist_item(request: Request, ticker: str):
+    try:
+        return market_service.delete_watchlist_item(request.state.principal_id, ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/watchlist/alerts", response_model=WatchlistAlertHistoryResponse)
+def get_watchlist_alert_history(request: Request, limit: int = 50):
+    try:
+        return market_service.get_watchlist_alert_history(request.state.principal_id, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/observability/metrics", response_model=ObservabilityResponse)
+def get_observability_metrics():
+    try:
+        return market_service.get_observability_metrics()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
