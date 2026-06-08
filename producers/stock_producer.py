@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from kafka.errors import KafkaError
 from kafka import KafkaProducer
 
-from pipeline_runtime import get_logger, retry
+from pipeline_runtime import get_logger, increment_metric, log_metrics_snapshot, retry, set_gauge
 
 
 load_dotenv()
@@ -217,6 +217,7 @@ def main():
             try:
                 event = fetch_stock_event_with_retry(ticker)
                 events.append(event)
+                increment_metric("producer.events_fetched")
                 logger.info(
                     "stock_event_fetched",
                     extra={
@@ -226,6 +227,7 @@ def main():
                     },
                 )
             except Exception as exc:
+                increment_metric("producer.fetch_failed")
                 logger.error(
                     "stock_event_fetch_failed",
                     extra={"ticker": ticker},
@@ -235,16 +237,22 @@ def main():
         if events:
             try:
                 send_batch(producer, events)
+                increment_metric("producer.batches_sent")
+                increment_metric("producer.events_sent", len(events))
+                set_gauge("producer.last_batch_size", len(events))
                 logger.info(
                     "producer_batch_sent",
                     extra={"topic": TOPIC_NAME, "batch_size": len(events)},
                 )
             except Exception as exc:
+                increment_metric("producer.batch_failed")
                 logger.error(
                     "producer_batch_failed",
                     extra={"topic": TOPIC_NAME, "batch_size": len(events)},
                     exc_info=exc,
                 )
+
+        log_metrics_snapshot(logger, "producer")
 
         time.sleep(PRODUCER_POLL_SECONDS)
 
