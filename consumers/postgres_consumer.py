@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
-from pipeline_runtime import get_logger, retry
+from pipeline_runtime import get_logger, increment_metric, log_metrics_snapshot, retry, set_gauge
 
 try:
     from consumers.event_validation import validate_stock_event
@@ -141,6 +141,7 @@ def main():
             try:
                 event = validate_stock_event(message.value)
             except (TypeError, ValueError) as exc:
+                increment_metric("postgres_consumer.invalid_event")
                 logger.warning(
                     "invalid_event_skipped",
                     extra={
@@ -156,6 +157,8 @@ def main():
             try:
                 insert_event_with_retry(conn, event, message)
                 commit_offset(consumer, message, "persisted")
+                increment_metric("postgres_consumer.events_persisted")
+                set_gauge("postgres_consumer.last_offset", message.offset)
                 logger.info(
                     "event_persisted",
                     extra={
@@ -168,6 +171,7 @@ def main():
                 )
             except psycopg2.Error as exc:
                 conn.rollback()
+                increment_metric("postgres_consumer.persist_failed")
                 logger.error(
                     "event_persist_failed",
                     extra={
@@ -179,6 +183,7 @@ def main():
                     },
                     exc_info=exc,
                 )
+            log_metrics_snapshot(logger, "postgres_consumer")
 
     except KeyboardInterrupt:
         logger.info("consumer_stopping", extra={"topic": TOPIC_NAME, "sink": "postgres"})
