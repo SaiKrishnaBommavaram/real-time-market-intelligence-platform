@@ -15,6 +15,7 @@ from api.schemas import (
     NewsSummaryResponse,
     ObservabilityResponse,
     RiskIndicatorsResponse,
+    ReadinessResponse,
     RootResponse,
     SectorPerformanceResponse,
     SentimentTrendResponse,
@@ -43,6 +44,14 @@ def health_check():
         return market_service.get_health()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/ready", response_model=ReadinessResponse)
+def readiness_check():
+    try:
+        return market_service.get_readiness()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @router.get("/market/summary", response_model=MarketSummaryResponse)
