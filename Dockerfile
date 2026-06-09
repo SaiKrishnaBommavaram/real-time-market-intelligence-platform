@@ -22,6 +22,6 @@ COPY pipeline_runtime.py ./
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
-  CMD curl -fsS "http://localhost:${PORT}/health" > /dev/null || exit 1
+  CMD curl -fsS "http://localhost:${PORT}/ready" > /dev/null || exit 1
 
-CMD ["sh", "-c", "gunicorn -k uvicorn.workers.UvicornWorker api.main:app --bind 0.0.0.0:${PORT} --timeout 180 --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "python -m api.startup && gunicorn -k uvicorn.workers.UvicornWorker api.main:app --bind 0.0.0.0:${PORT} --timeout 180 --access-logfile - --error-logfile -"]
