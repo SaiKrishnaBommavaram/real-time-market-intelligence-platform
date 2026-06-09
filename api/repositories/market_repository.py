@@ -44,6 +44,14 @@ class MarketRepository:
         conn.close()
         return result
 
+    def fetch_readiness_status(self):
+        health_result = self.fetch_health_status()
+        self.verify_stock_search_cache_table()
+        return {
+            "database": bool(health_result and health_result.get("status") == 1),
+            "stock_search_cache_table": True,
+        }
+
     def fetch_market_summary(self):
         conn = get_db_connection()
         cur = conn.cursor()
