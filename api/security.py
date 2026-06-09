@@ -12,7 +12,7 @@ from api.observability import increment_metric
 
 
 logger = logging.getLogger("market.api.security")
-EXEMPT_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+EXEMPT_PATHS = {"/", "/health", "/ready", "/docs", "/openapi.json", "/redoc"}
 
 
 def is_exempt_path(path: str) -> bool:
