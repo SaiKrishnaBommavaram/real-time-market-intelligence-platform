@@ -5,7 +5,9 @@ from enum import StrEnum
 from dotenv import load_dotenv
 
 
-load_dotenv()
+_bootstrap_environment = (os.getenv("MARKET_ENV") or "local").strip().lower()
+if _bootstrap_environment != "prod":
+    load_dotenv()
 
 
 class AppEnvironment(StrEnum):
@@ -20,6 +22,20 @@ def _get_env(name: str, default: str | None = None) -> str | None:
         return default
     stripped = value.strip()
     return stripped if stripped else default
+
+
+def _read_file_value(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as file:
+        return file.read().strip()
+
+
+def _get_secret(name: str, default: str | None = None) -> str | None:
+    file_path = _get_env(f"{name}_FILE")
+    if file_path:
+        secret_value = _read_file_value(file_path)
+        if secret_value:
+            return secret_value
+    return _get_env(name, default)
 
 
 def _get_required_env(name: str) -> str:
@@ -72,6 +88,9 @@ class DatabaseSettings:
 class CorsSettings:
     allowed_origins: list[str]
     allowed_origin_regex: str | None
+    allowed_methods: list[str]
+    allowed_headers: list[str]
+    allow_credentials: bool
 
 
 @dataclass(frozen=True)
@@ -101,6 +120,17 @@ class CacheSettings:
     allow_stale_fallback: bool
 
 
+class StartupCheckMode(StrEnum):
+    OFF = "off"
+    WARN = "warn"
+    STRICT = "strict"
+
+
+@dataclass(frozen=True)
+class DeploymentSettings:
+    startup_check_mode: StartupCheckMode
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: AppEnvironment
@@ -114,6 +144,7 @@ class Settings:
     security: SecuritySettings
     news: NewsSettings
     cache: CacheSettings
+    deployment: DeploymentSettings
 
     @property
     def is_local(self) -> bool:
@@ -154,6 +185,18 @@ class Settings:
     @property
     def allowed_origin_regex(self) -> str | None:
         return self.cors.allowed_origin_regex
+
+    @property
+    def allowed_methods(self) -> list[str]:
+        return self.cors.allowed_methods
+
+    @property
+    def allowed_headers(self) -> list[str]:
+        return self.cors.allowed_headers
+
+    @property
+    def cors_allow_credentials(self) -> bool:
+        return self.cors.allow_credentials
 
     @property
     def api_key(self) -> str | None:
@@ -215,10 +258,23 @@ class Settings:
     def allow_stale_cache_fallback(self) -> bool:
         return self.cache.allow_stale_fallback
 
+    @property
+    def startup_check_mode(self) -> StartupCheckMode:
+        return self.deployment.startup_check_mode
+
 
 def _validate_positive(name: str, value: int):
     if value <= 0:
         raise ValueError(f"{name} must be greater than 0.")
+
+
+def _get_startup_check_mode(environment: AppEnvironment) -> StartupCheckMode:
+    default_mode = "warn" if environment == AppEnvironment.LOCAL else "strict"
+    raw_value = (_get_env("MARKET_STARTUP_CHECK_MODE", default_mode) or default_mode).lower()
+    try:
+        return StartupCheckMode(raw_value)
+    except ValueError as exc:
+        raise ValueError("MARKET_STARTUP_CHECK_MODE must be one of: off, warn, strict.") from exc
 
 
 def build_settings() -> Settings:
@@ -231,23 +287,29 @@ def build_settings() -> Settings:
         port=_get_int("MARKET_DB_PORT", "55432"),
         name=_get_env("MARKET_DB_NAME", "market_data") or "market_data",
         user=_get_env("MARKET_DB_USER", "postgres") or "postgres",
-        password=_get_env("MARKET_DB_PASSWORD", "postgres") or "postgres",
+        password=_get_secret("MARKET_DB_PASSWORD", "postgres") or "postgres",
     )
 
     cors = CorsSettings(
-        allowed_origins=_get_csv("ALLOWED_ORIGINS", "http://localhost:5173"),
+        allowed_origins=_get_csv(
+            "ALLOWED_ORIGINS",
+            "http://localhost:5173" if environment == AppEnvironment.LOCAL else "",
+        ),
         allowed_origin_regex=_get_env("ALLOWED_ORIGIN_REGEX"),
+        allowed_methods=_get_csv("ALLOWED_METHODS", "GET,POST,DELETE"),
+        allowed_headers=_get_csv("ALLOWED_HEADERS", "Content-Type,X-API-Key,X-Request-ID"),
+        allow_credentials=_get_bool("CORS_ALLOW_CREDENTIALS", "true"),
     )
 
     security = SecuritySettings(
-        api_key=_get_env("MARKET_API_KEY"),
+        api_key=_get_secret("MARKET_API_KEY"),
         api_key_header=_get_env("MARKET_API_KEY_HEADER", "x-api-key") or "x-api-key",
         rate_limit_max_requests=_get_int("MARKET_RATE_LIMIT_MAX_REQUESTS", "120"),
         rate_limit_window_seconds=_get_int("MARKET_RATE_LIMIT_WINDOW_SECONDS", "60"),
     )
 
     news = NewsSettings(
-        api_key=_get_env("NEWS_API_KEY"),
+        api_key=_get_secret("NEWS_API_KEY"),
         local_summarizer_model=_get_env(
             "LOCAL_SUMMARIZER_MODEL",
             "sshleifer/distilbart-cnn-12-6",
@@ -264,6 +326,9 @@ def build_settings() -> Settings:
         news_ttl_minutes=_get_int("MARKET_NEWS_CACHE_TTL_MINUTES", "180"),
         news_summary_ttl_minutes=_get_int("MARKET_NEWS_SUMMARY_CACHE_TTL_MINUTES", "180"),
         allow_stale_fallback=_get_bool("MARKET_ALLOW_STALE_CACHE_FALLBACK", "true"),
+    )
+    deployment = DeploymentSettings(
+        startup_check_mode=_get_startup_check_mode(environment),
     )
 
     for name, value in (
@@ -287,8 +352,15 @@ def build_settings() -> Settings:
             raise ValueError("MARKET_API_KEY is required in prod.")
         if not news.api_key:
             raise ValueError("NEWS_API_KEY is required in prod.")
+        if not cors.allowed_origins and not cors.allowed_origin_regex:
+            raise ValueError("ALLOWED_ORIGINS or ALLOWED_ORIGIN_REGEX is required in prod.")
         if any("localhost" in origin for origin in cors.allowed_origins):
             raise ValueError("ALLOWED_ORIGINS must not contain localhost in prod.")
+        if "*" in cors.allowed_origins:
+            raise ValueError("ALLOWED_ORIGINS must not contain '*' in prod.")
+
+    if "*" in cors.allowed_origins and cors.allow_credentials:
+        raise ValueError("CORS_ALLOW_CREDENTIALS cannot be true when ALLOWED_ORIGINS contains '*'.")
 
     return Settings(
         environment=environment,
@@ -302,6 +374,7 @@ def build_settings() -> Settings:
         security=security,
         news=news,
         cache=cache,
+        deployment=deployment,
     )
 
 
