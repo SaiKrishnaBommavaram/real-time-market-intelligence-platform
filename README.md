@@ -32,6 +32,7 @@ An end-to-end market data platform that:
    - business logic from `api/services/`
    - persistence access from `api/repositories/`
 7. `dashboard/` calls the API and displays health, warehouse summaries, live ticker data, and news sentiment.
+   The dashboard now uses a TanStack Query data layer for polling, stale/fresh state, retries, and cross-view cache reuse.
 
 ### Repo layout
 
@@ -77,19 +78,29 @@ Important variables:
 - `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
+- `NEWS_API_KEY_FILE`: optional file-based secret source for shared/dev/prod deployments
 - `MARKET_API_KEY`: optional shared API key for protecting non-health API routes
+- `MARKET_API_KEY_FILE`: optional file-based secret source for shared/dev/prod deployments
+- `MARKET_DB_PASSWORD_FILE`: optional file-based secret source for shared/dev/prod deployments
 - `MARKET_RATE_LIMIT_MAX_REQUESTS`, `MARKET_RATE_LIMIT_WINDOW_SECONDS`: in-memory per-client API rate limits
 - `MARKET_LIVE_CACHE_TTL_MINUTES`, `MARKET_NEWS_CACHE_TTL_MINUTES`, `MARKET_NEWS_SUMMARY_CACHE_TTL_MINUTES`: explicit cache freshness windows for live quotes, raw news, and summarized news
 - `MARKET_ALLOW_STALE_CACHE_FALLBACK`: whether stale cached data may be served when upstream refresh fails
+- `MARKET_STARTUP_CHECK_MODE`: `off`, `warn`, or `strict` startup readiness behavior
 - `VITE_API_BASE_URL`: frontend API base URL
 - `VITE_API_KEY`: frontend API key header value when `MARKET_API_KEY` is enabled
-- `ALLOWED_ORIGINS` and `ALLOWED_ORIGIN_REGEX`: backend CORS
+- `ALLOWED_ORIGINS`, `ALLOWED_ORIGIN_REGEX`, `ALLOWED_METHODS`, `ALLOWED_HEADERS`, `CORS_ALLOW_CREDENTIALS`: backend CORS
 
 Environment guidance:
 
 - `local`: permissive defaults for local development
 - `dev`: non-production shared environment
 - `prod`: validates stronger requirements, including non-default DB credentials, configured API auth, configured news API key, and non-localhost CORS origins
+
+Environment-specific runbooks:
+
+- local: [docs/environments/local.md](/Users/saikrishnabommavaram/Downloads/real-time-market-intelligence-platform/docs/environments/local.md)
+- dev: [docs/environments/dev.md](/Users/saikrishnabommavaram/Downloads/real-time-market-intelligence-platform/docs/environments/dev.md)
+- prod: [docs/environments/prod.md](/Users/saikrishnabommavaram/Downloads/real-time-market-intelligence-platform/docs/environments/prod.md)
 
 ### 2. Start the infrastructure stack
 
@@ -259,6 +270,7 @@ API docs and health checks:
 
 - `http://localhost:8000/`
 - `http://localhost:8000/health`
+- `http://localhost:8000/ready`
 - `http://localhost:8000/docs`
 
 Additional analytics routes:
@@ -288,10 +300,18 @@ The observability endpoint reports API request counts/latency, auth and rate-lim
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
+The API now separates liveness from readiness:
+
+- `/health`: process liveness only
+- `/ready`: PostgreSQL connectivity and cache-table readiness
+
+In shared and production environments, prefer mounted secret files or platform secret managers over committed `.env` files. `MARKET_DB_PASSWORD_FILE`, `MARKET_API_KEY_FILE`, and `NEWS_API_KEY_FILE` are supported for that path.
+
 ### 10. Start the frontend
 
 ```bash
 cd dashboard
+npm install
 npm run dev
 ```
 
@@ -323,7 +343,11 @@ Returns the API status message and the main endpoint list.
 
 ### `GET /health`
 
-Checks PostgreSQL connectivity.
+Reports API liveness without dependency checks.
+
+### `GET /ready`
+
+Reports startup readiness, including PostgreSQL connectivity and required cache-table availability.
 
 ### `GET /market/summary`
 
@@ -404,14 +428,21 @@ Example:
 VITE_API_BASE_URL=https://real-time-market-intelligence-api.onrender.com
 ```
 
+The dashboard uses TanStack Query. After pulling these changes, refresh frontend dependencies with `npm install` before rebuilding.
+
 ## Backend Deployment on Render
 
 This repo includes `render.yaml` for the FastAPI service.
 
 Required backend environment variables:
 
+- `MARKET_ENV=prod`
 - `ALLOWED_ORIGINS`
 - `ALLOWED_ORIGIN_REGEX` if you need dynamic preview domains
+- `ALLOWED_METHODS`
+- `ALLOWED_HEADERS`
+- `CORS_ALLOW_CREDENTIALS`
+- `MARKET_STARTUP_CHECK_MODE=strict`
 - `MARKET_PRODUCER_POLL_SECONDS`
 - `MARKET_PRODUCER_MAX_RETRIES`
 - `MARKET_PRODUCER_BACKOFF_SECONDS`
@@ -420,17 +451,22 @@ Required backend environment variables:
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`
 - `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`
 - `NEWS_API_KEY`
+- `NEWS_API_KEY_FILE` as an alternative to `NEWS_API_KEY`
 - `MARKET_DB_HOST`
 - `MARKET_DB_PORT`
 - `MARKET_DB_NAME`
 - `MARKET_DB_USER`
 - `MARKET_DB_PASSWORD`
+- `MARKET_DB_PASSWORD_FILE` as an alternative to `MARKET_DB_PASSWORD`
+- `MARKET_API_KEY` or `MARKET_API_KEY_FILE`
 
 Start command:
 
 ```bash
 uvicorn api.main:app --host 0.0.0.0 --port $PORT
 ```
+
+Health checks should target `/ready` so traffic is only sent once the database and cache table are ready.
 
 ## AWS Deployment Baseline
 
@@ -451,7 +487,7 @@ Check that your dbt profile schema is `analytics`. The API queries `analytics.da
 
 ### `/stocks/{ticker}/news` returns `NEWS_API_KEY is not configured`
 
-Set `NEWS_API_KEY` in `.env` and restart the API.
+Set `NEWS_API_KEY` or `NEWS_API_KEY_FILE` and restart the API.
 
 ### The first news summary request is slow
 
