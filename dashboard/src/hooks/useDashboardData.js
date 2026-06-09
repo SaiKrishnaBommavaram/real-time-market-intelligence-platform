@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  useMutation,
+  useQueries,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import {
   deleteWatchlistItem,
@@ -27,6 +32,18 @@ import {
 
 const DEFAULT_TICKER = "AAPL";
 const WATCHLIST_STORAGE_KEY = "market-dashboard-watchlist-v1";
+const dashboardQueryKeys = {
+  health: ["health"],
+  marketSummary: ["market-summary"],
+  intradayMovers: ["intraday-movers"],
+  watchlist: ["watchlist"],
+  watchlistAlerts: ["watchlist-alerts"],
+  liveStock: (ticker) => ["live-stock", ticker],
+  stockSummary: (ticker) => ["stock-summary", ticker],
+  stockNews: (ticker) => ["stock-news", ticker],
+  stockNewsSummary: (ticker) => ["stock-news-summary", ticker],
+  intradayCandles: (ticker) => ["intraday-candles", ticker],
+};
 
 function loadStoredWatchlist() {
   if (typeof window === "undefined") {
@@ -57,23 +74,144 @@ function loadStoredWatchlist() {
 }
 
 export function useDashboardData() {
-  const [health, setHealth] = useState(null);
-  const [summary, setSummary] = useState([]);
   const [ticker, setTicker] = useState(DEFAULT_TICKER);
   const [activeTicker, setActiveTicker] = useState(DEFAULT_TICKER);
-  const [liveStock, setLiveStock] = useState(null);
-  const [tickerSummary, setTickerSummary] = useState([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [news, setNews] = useState([]);
-  const [newsSummary, setNewsSummary] = useState(null);
-  const [newsSummaryLoading, setNewsSummaryLoading] = useState(false);
-  const [newsSummaryError, setNewsSummaryError] = useState("");
-  const [watchlist, setWatchlist] = useState(loadStoredWatchlist);
-  const [intradayMovers, setIntradayMovers] = useState([]);
-  const [intradayCandles, setIntradayCandles] = useState([]);
-  const [watchlistAlerts, setWatchlistAlerts] = useState([]);
+  const queryClient = useQueryClient();
+
+  const baseQueries = useQueries({
+    queries: [
+      {
+        queryKey: dashboardQueryKeys.health,
+        queryFn: fetchHealth,
+        staleTime: 15_000,
+        refetchInterval: 30_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.marketSummary,
+        queryFn: fetchMarketSummary,
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.intradayMovers,
+        queryFn: fetchIntradayMovers,
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.watchlist,
+        queryFn: fetchWatchlist,
+        initialData: {
+          data: loadStoredWatchlist(),
+        },
+        staleTime: 30_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.watchlistAlerts,
+        queryFn: fetchWatchlistAlerts,
+        initialData: {
+          data: [],
+        },
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      },
+    ],
+  });
+
+  const [
+    healthQuery,
+    marketSummaryQuery,
+    intradayMoversQuery,
+    watchlistQuery,
+    watchlistAlertsQuery,
+  ] = baseQueries;
+
+  const tickerQueries = useQueries({
+    queries: [
+      {
+        queryKey: dashboardQueryKeys.liveStock(activeTicker),
+        queryFn: () => fetchLiveStock(activeTicker),
+        enabled: Boolean(activeTicker),
+        staleTime: 15_000,
+        refetchInterval: 30_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.stockSummary(activeTicker),
+        queryFn: () => fetchStockSummary(activeTicker),
+        enabled: Boolean(activeTicker),
+        staleTime: 30_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.stockNews(activeTicker),
+        queryFn: () => fetchStockNews(activeTicker),
+        enabled: Boolean(activeTicker),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.stockNewsSummary(activeTicker),
+        queryFn: () => fetchStockNewsSummary(activeTicker),
+        enabled: Boolean(activeTicker),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.intradayCandles(activeTicker),
+        queryFn: () => fetchIntradayCandles(activeTicker),
+        enabled: Boolean(activeTicker),
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+      },
+    ],
+  });
+
+  const [
+    liveStockQuery,
+    stockSummaryQuery,
+    newsQuery,
+    newsSummaryQuery,
+    intradayCandlesQuery,
+  ] = tickerQueries;
+
+  const health = healthQuery.data ?? null;
+  const summary = marketSummaryQuery.data?.data ?? [];
+  const intradayMovers = intradayMoversQuery.data?.data ?? [];
+  const liveStock = liveStockQuery.data ?? null;
+  const tickerSummary = stockSummaryQuery.data?.data ?? [];
+  const news = newsQuery.data?.articles ?? [];
+  const newsSummary = newsSummaryQuery.data ?? null;
+  const newsSummaryError = newsSummaryQuery.isError
+    ? "News summary is unavailable for this ticker right now."
+    : "";
+  const watchlist = useMemo(() => {
+    const persistedItems = watchlistQuery.data?.data;
+    if (!Array.isArray(persistedItems) || !persistedItems.length) {
+      return [createWatchlistEntry(DEFAULT_TICKER)];
+    }
+
+    return persistedItems
+      .filter((item) => item?.ticker)
+      .map((item) => ({
+        ticker: String(item.ticker).trim().toUpperCase(),
+        priceAlertThreshold: Number(item.price_alert_threshold ?? item.priceAlertThreshold ?? 4),
+        volumeAlertThreshold: Number(
+          item.volume_alert_threshold ?? item.volumeAlertThreshold ?? 1.5,
+        ),
+      }));
+  }, [watchlistQuery.data]);
+  const intradayCandles = intradayCandlesQuery.data?.data ?? [];
+  const watchlistAlerts = watchlistAlertsQuery.data?.data ?? [];
+  const loading =
+    marketSummaryQuery.isLoading ||
+    healthQuery.isLoading ||
+    intradayMoversQuery.isLoading ||
+    watchlistQuery.isLoading;
+  const searchLoading =
+    liveStockQuery.isLoading ||
+    stockSummaryQuery.isLoading ||
+    newsQuery.isLoading ||
+    newsSummaryQuery.isLoading ||
+    intradayCandlesQuery.isLoading;
+  const newsSummaryLoading = newsSummaryQuery.isLoading;
 
   const marketMetrics = useMemo(() => buildMarketMetrics(summary), [summary]);
   const marketTrend = useMemo(() => buildMarketTrend(summary), [summary]);
@@ -85,7 +223,6 @@ export function useDashboardData() {
     [marketLeaders],
   );
   const tickerTrend = useMemo(() => buildTickerTrend(tickerSummary), [tickerSummary]);
-  const latestTickerSummary = tickerSummary[0] || null;
   const watchlistEntries = useMemo(
     () => buildWatchlistEntries(summary, watchlist),
     [summary, watchlist],
@@ -95,8 +232,6 @@ export function useDashboardData() {
     [watchlistEntries],
   );
 
-  const hasInitialized = useRef(false);
-
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -105,65 +240,54 @@ export function useDashboardData() {
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
   }, [watchlist]);
 
-  const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    const [healthResult, marketResult, intradayMoversResult, watchlistResult, watchlistAlertsResult] =
-      await Promise.allSettled([
-      fetchHealth(),
-      fetchMarketSummary(),
-      fetchIntradayMovers(),
-      fetchWatchlist(),
-      fetchWatchlistAlerts(),
-    ]);
-
-    if (healthResult.status === "fulfilled") {
-      setHealth(healthResult.value);
-    } else {
-      setHealth(null);
-    }
-
-    if (marketResult.status === "fulfilled") {
-      setSummary(marketResult.value.data || []);
-    } else {
-      setSummary([]);
+  useEffect(() => {
+    if (marketSummaryQuery.isError) {
       setError(
-        marketResult.reason instanceof Error
-          ? marketResult.reason.message
+        marketSummaryQuery.error instanceof Error
+          ? marketSummaryQuery.error.message
           : "Could not load dashboard data. Make sure FastAPI is running.",
       );
+      return;
     }
 
-    if (intradayMoversResult.status === "fulfilled") {
-      setIntradayMovers(intradayMoversResult.value.data || []);
-    } else {
-      setIntradayMovers([]);
+    if (liveStockQuery.isError && activeTicker) {
+      setError(
+        liveStockQuery.error?.response?.data?.detail ||
+          `No live data found for ${activeTicker}`,
+      );
+      return;
     }
 
-    if (watchlistResult.status === "fulfilled") {
-      const persistedWatchlist = (watchlistResult.value.data || []).map((item) => ({
-        ticker: item.ticker,
-        priceAlertThreshold: Number(item.price_alert_threshold || item.priceAlertThreshold || 4),
-        volumeAlertThreshold: Number(
-          item.volume_alert_threshold || item.volumeAlertThreshold || 1.5,
-        ),
-      }));
-      if (persistedWatchlist.length) {
-        setWatchlist(persistedWatchlist);
-      }
-    }
+    setError("");
+  }, [
+    activeTicker,
+    liveStockQuery.error,
+    liveStockQuery.isError,
+    marketSummaryQuery.error,
+    marketSummaryQuery.isError,
+  ]);
 
-    if (watchlistAlertsResult.status === "fulfilled") {
-      setWatchlistAlerts(watchlistAlertsResult.value.data || []);
-    } else {
-      setWatchlistAlerts([]);
-    }
+  async function loadDashboard() {
+    setError("");
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.health }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.marketSummary }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.intradayMovers }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlist }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlistAlerts }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.liveStock(activeTicker) }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.stockSummary(activeTicker) }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.stockNews(activeTicker) }),
+      queryClient.invalidateQueries({
+        queryKey: dashboardQueryKeys.stockNewsSummary(activeTicker),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: dashboardQueryKeys.intradayCandles(activeTicker),
+      }),
+    ]);
+  }
 
-    setLoading(false);
-  }, []);
-
-  const searchTicker = useCallback(async (nextTicker = ticker) => {
+  async function searchTicker(nextTicker = ticker) {
     const cleanedTicker = nextTicker.trim().toUpperCase();
 
     if (!cleanedTicker) {
@@ -173,74 +297,41 @@ export function useDashboardData() {
 
     setTicker(cleanedTicker);
     setActiveTicker(cleanedTicker);
-    setSearchLoading(true);
     setError("");
-    setNews([]);
-    setNewsSummary(null);
-    setNewsSummaryError("");
-    setNewsSummaryLoading(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.liveStock(cleanedTicker) }),
+      queryClient.invalidateQueries({
+        queryKey: dashboardQueryKeys.stockSummary(cleanedTicker),
+      }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.stockNews(cleanedTicker) }),
+      queryClient.invalidateQueries({
+        queryKey: dashboardQueryKeys.stockNewsSummary(cleanedTicker),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: dashboardQueryKeys.intradayCandles(cleanedTicker),
+      }),
+    ]);
+  }
 
-    const [liveResult, newsResult, summaryResult, warehouseResult] =
-      await Promise.allSettled([
-        fetchLiveStock(cleanedTicker),
-        fetchStockNews(cleanedTicker),
-        fetchStockNewsSummary(cleanedTicker),
-        fetchStockSummary(cleanedTicker),
+  const watchlistMutation = useMutation({
+    mutationFn: upsertWatchlistItem,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlist }),
+        queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlistAlerts }),
       ]);
-    const intradayResult = await Promise.allSettled([fetchIntradayCandles(cleanedTicker)]);
+    },
+  });
 
-    if (liveResult.status === "fulfilled") {
-      setLiveStock(liveResult.value);
-    } else {
-      setLiveStock(null);
-      setError(
-        liveResult.reason?.response?.data?.detail ||
-          `No live data found for ${cleanedTicker}`,
-      );
-    }
-
-    if (newsResult.status === "fulfilled") {
-      setNews(newsResult.value.articles || []);
-    } else {
-      setNews([]);
-    }
-
-    if (summaryResult.status === "fulfilled") {
-      setNewsSummary(summaryResult.value);
-    } else {
-      setNewsSummary(null);
-      setNewsSummaryError("News summary is unavailable for this ticker right now.");
-    }
-
-    if (warehouseResult.status === "fulfilled") {
-      setTickerSummary(warehouseResult.value.data || []);
-    } else {
-      setTickerSummary([]);
-    }
-
-    if (intradayResult[0].status === "fulfilled") {
-      setIntradayCandles(intradayResult[0].value.data || []);
-    } else {
-      setIntradayCandles([]);
-    }
-
-    setNewsSummaryLoading(false);
-    setSearchLoading(false);
-  }, [ticker]);
-
-  useEffect(() => {
-    if (hasInitialized.current) {
-      return;
-    }
-
-    hasInitialized.current = true;
-
-    async function initialize() {
-      await Promise.all([loadDashboard(), searchTicker(DEFAULT_TICKER)]);
-    }
-
-    void initialize();
-  }, [loadDashboard, searchTicker]);
+  const deleteWatchlistMutation = useMutation({
+    mutationFn: deleteWatchlistItem,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlist }),
+        queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlistAlerts }),
+      ]);
+    },
+  });
 
   function addTickerToWatchlist(nextTicker = activeTicker) {
     const cleanedTicker = nextTicker.trim().toUpperCase();
@@ -248,26 +339,39 @@ export function useDashboardData() {
       return;
     }
 
-    setWatchlist((currentWatchlist) => {
-      if (currentWatchlist.some((item) => item.ticker === cleanedTicker)) {
-        return currentWatchlist;
-      }
+    const currentWatchlist = watchlistQuery.data?.data ?? [];
+    if (currentWatchlist.some((item) => item.ticker === cleanedTicker)) {
+      return;
+    }
 
-      return [...currentWatchlist, createWatchlistEntry(cleanedTicker)];
+    const nextWatchlist = [...currentWatchlist, createWatchlistEntry(cleanedTicker)];
+    queryClient.setQueryData(dashboardQueryKeys.watchlist, {
+      ...(watchlistQuery.data || {}),
+      data: nextWatchlist,
     });
-    void upsertWatchlistItem({
+    void watchlistMutation.mutateAsync({
       ticker: cleanedTicker,
       price_alert_threshold: createWatchlistEntry(cleanedTicker).priceAlertThreshold,
       volume_alert_threshold: createWatchlistEntry(cleanedTicker).volumeAlertThreshold,
-    }).catch(() => undefined);
+    }).catch(() => {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
+    });
   }
 
   function removeTickerFromWatchlist(tickerToRemove) {
-    setWatchlist((currentWatchlist) => {
-      const nextWatchlist = currentWatchlist.filter((item) => item.ticker !== tickerToRemove);
-      return nextWatchlist.length ? nextWatchlist : [createWatchlistEntry(DEFAULT_TICKER)];
+    const currentWatchlist = watchlistQuery.data?.data ?? [];
+    const nextWatchlist = currentWatchlist.filter((item) => item.ticker !== tickerToRemove);
+    const fallbackWatchlist = nextWatchlist.length
+      ? nextWatchlist
+      : [createWatchlistEntry(DEFAULT_TICKER)];
+
+    queryClient.setQueryData(dashboardQueryKeys.watchlist, {
+      ...(watchlistQuery.data || {}),
+      data: fallbackWatchlist,
     });
-    void deleteWatchlistItem(tickerToRemove).catch(() => undefined);
+    void deleteWatchlistMutation.mutateAsync(tickerToRemove).catch(() => {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
+    });
   }
 
   function updateWatchlistThreshold(tickerToUpdate, fieldName, nextValue) {
@@ -276,22 +380,46 @@ export function useDashboardData() {
       return;
     }
 
-    setWatchlist((currentWatchlist) =>
-      currentWatchlist.map((item) =>
-        item.ticker === tickerToUpdate
-          ? { ...item, [fieldName]: normalizedValue }
-          : item,
-      ),
+    const currentWatchlist = watchlistQuery.data?.data ?? [];
+    const nextWatchlist = currentWatchlist.map((item) =>
+      item.ticker === tickerToUpdate
+        ? { ...item, [fieldName]: normalizedValue }
+        : item,
     );
+    queryClient.setQueryData(dashboardQueryKeys.watchlist, {
+      ...(watchlistQuery.data || {}),
+      data: nextWatchlist,
+    });
+
+    const currentTickerSettings =
+      currentWatchlist.find((item) => item.ticker === tickerToUpdate) ||
+      createWatchlistEntry(tickerToUpdate);
     const nextWatchlistItem = {
       ticker: tickerToUpdate,
       price_alert_threshold:
-        fieldName === "priceAlertThreshold" ? normalizedValue : watchlist.find((item) => item.ticker === tickerToUpdate)?.priceAlertThreshold || 4,
+        fieldName === "priceAlertThreshold"
+          ? normalizedValue
+          : currentTickerSettings.priceAlertThreshold || 4,
       volume_alert_threshold:
-        fieldName === "volumeAlertThreshold" ? normalizedValue : watchlist.find((item) => item.ticker === tickerToUpdate)?.volumeAlertThreshold || 1.5,
+        fieldName === "volumeAlertThreshold"
+          ? normalizedValue
+          : currentTickerSettings.volumeAlertThreshold || 1.5,
     };
-    void upsertWatchlistItem(nextWatchlistItem).catch(() => undefined);
+    void watchlistMutation.mutateAsync(nextWatchlistItem).catch(() => {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
+    });
   }
+
+  const watchlistEntries = useMemo(
+    () => buildWatchlistEntries(summary, watchlist),
+    [summary, watchlist],
+  );
+  const triggeredAlerts = useMemo(
+    () => watchlistEntries.filter((entry) => entry.hasAlert),
+    [watchlistEntries],
+  );
+
+  const latestTickerSummary = tickerSummary[0] || null;
 
   return {
     activeTicker,
@@ -304,6 +432,7 @@ export function useDashboardData() {
     loading,
     intradayCandles,
     intradayMovers,
+    loadDashboard,
     marketLeaders,
     marketMetrics,
     marketTrend,
@@ -314,6 +443,8 @@ export function useDashboardData() {
     quickTickers,
     removeTickerFromWatchlist,
     searchLoading,
+    searchTicker,
+    setTicker,
     summary,
     ticker,
     tickerSummary,
@@ -323,8 +454,5 @@ export function useDashboardData() {
     updateWatchlistThreshold,
     watchlistAlerts,
     watchlistEntries,
-    loadDashboard,
-    searchTicker,
-    setTicker,
   };
 }
