@@ -23,8 +23,17 @@ class HealthQueryResult(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    database: str
-    query_result: HealthQueryResult
+    service: str
+    environment: str
+    version: str
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    service: str
+    environment: str
+    version: str
+    checks: dict[str, bool]
 
 
 class DailySummaryRow(BaseModel):
