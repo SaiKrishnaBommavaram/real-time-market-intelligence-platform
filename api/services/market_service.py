@@ -37,6 +37,7 @@ class MarketService:
             "message": "Real-Time Market Intelligence API is running",
             "available_endpoints": [
                 "/health",
+                "/ready",
                 "/market/summary",
                 "/stocks/{ticker}/summary",
                 "/stocks/{ticker}/live",
@@ -59,11 +60,21 @@ class MarketService:
         }
 
     def get_health(self):
-        result = self.repository.fetch_health_status()
         return {
             "status": "healthy",
-            "database": "connected",
-            "query_result": result,
+            "service": "market-api",
+            "environment": settings.environment,
+            "version": settings.app_version,
+        }
+
+    def get_readiness(self):
+        checks = self.repository.fetch_readiness_status()
+        return {
+            "status": "ready" if all(checks.values()) else "degraded",
+            "service": "market-api",
+            "environment": settings.environment,
+            "version": settings.app_version,
+            "checks": checks,
         }
 
     def get_market_summary(self):
