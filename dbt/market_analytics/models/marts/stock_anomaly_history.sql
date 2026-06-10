@@ -4,9 +4,14 @@
 
 SELECT
     ticker,
+    company_name,
+    sector,
+    benchmark_ticker,
+    benchmark_name,
     trade_date,
     anomaly_flag,
-    ROUND(ABS(price_change_pct) + volume_vs_avg_ratio, 4) AS anomaly_severity_score,
+    ROUND(ABS(COALESCE(relative_price_change_pct, price_change_pct)) + volume_vs_avg_ratio, 4) AS anomaly_severity_score,
+    relative_price_change_pct,
     price_change_pct,
     volume_vs_avg_ratio,
     close_price,
