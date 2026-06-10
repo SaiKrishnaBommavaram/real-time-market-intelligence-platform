@@ -10,6 +10,8 @@ class CacheMetadata(BaseModel):
     expires_at: datetime | None = None
     updated_at: datetime | None = None
     stale_by_seconds: int | None = None
+    freshness_reason: str | None = None
+    market_context: dict | None = None
 
 
 class RootResponse(BaseModel):
@@ -38,6 +40,10 @@ class ReadinessResponse(BaseModel):
 
 class DailySummaryRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     trade_date: date
     event_count: int
     avg_price: float
@@ -48,6 +54,9 @@ class DailySummaryRow(BaseModel):
     open_price: float
     close_price: float
     previous_close_price: float | None = None
+    benchmark_close_price: float | None = None
+    benchmark_price_change_pct: float | None = None
+    relative_price_change_pct: float | None = None
     price_change_pct: float
     volume_vs_avg_ratio: float
     anomaly_flag: str
@@ -66,10 +75,16 @@ class StockSummaryResponse(BaseModel):
 
 class LiveStockResponse(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     price: float
     volume: int
     event_time: datetime
     source: str
+    market_session: str | None = None
+    market_context: dict | None = None
     cache: CacheMetadata
 
 
@@ -108,6 +123,9 @@ class NewsArticle(BaseModel):
     impact_label: str
     content: str | None = None
     article_summary: str | None = None
+    canonical_ticker: str | None = None
+    company_name: str | None = None
+    canonical_entity_matches: list[str] = Field(default_factory=list)
 
 
 class StockNewsResponse(BaseModel):
@@ -132,9 +150,16 @@ class NewsSummaryResponse(BaseModel):
 
 class MoversRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     trade_date: date
     close_price: float
     previous_close_price: float | None = None
+    benchmark_close_price: float | None = None
+    benchmark_price_change_pct: float | None = None
+    relative_price_change_pct: float | None = None
     price_change_pct: float
     total_volume: int
     volume_vs_avg_ratio: float
@@ -224,6 +249,7 @@ class SectorPerformanceRow(BaseModel):
     trade_date: date
     ticker_count: int
     avg_price_change_pct: float
+    avg_relative_price_change_pct: float | None = None
     avg_volume_ratio: float
     total_volume: int
     anomaly_count: int
@@ -238,9 +264,14 @@ class SectorPerformanceResponse(BaseModel):
 
 class AnomalyHistoryRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     trade_date: date
     anomaly_flag: str
     anomaly_severity_score: float
+    relative_price_change_pct: float | None = None
     price_change_pct: float
     volume_vs_avg_ratio: float
     close_price: float
@@ -254,11 +285,20 @@ class AnomalyHistoryResponse(BaseModel):
 
 class IntradayCandleRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     interval_start: datetime
+    market_session: str | None = None
     open_price: float
     high_price: float
     low_price: float
     close_price: float
+    previous_close_price: float | None = None
+    benchmark_close_price: float | None = None
+    benchmark_interval_change_pct: float | None = None
+    relative_interval_change_pct: float | None = None
     bar_count: int
     total_volume: int
     last_updated_at: datetime
@@ -272,10 +312,17 @@ class IntradayCandlesResponse(BaseModel):
 
 class IntradayMoverRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     interval_start: datetime
+    market_session: str | None = None
     close_price: float
     previous_close_price: float | None = None
     interval_change_pct: float | None = None
+    benchmark_interval_change_pct: float | None = None
+    relative_interval_change_pct: float | None = None
     total_volume: int
     bar_count: int
 
@@ -287,6 +334,10 @@ class IntradayMoversResponse(BaseModel):
 
 class WatchlistItem(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     price_alert_threshold: float
     volume_alert_threshold: float
     created_at: datetime | None = None
@@ -307,8 +358,13 @@ class WatchlistUpsertRequest(BaseModel):
 
 class WatchlistAlertHistoryRow(BaseModel):
     ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
     trade_date: date
     close_price: float
+    relative_price_change_pct: float | None = None
     price_change_pct: float
     volume_vs_avg_ratio: float
     anomaly_flag: str
@@ -338,3 +394,33 @@ class ObservabilityResponse(BaseModel):
     counters: dict[str, int]
     gauges: dict[str, float | int]
     timings: dict[str, MetricsTimingRow]
+
+
+class SignalFeatureRow(BaseModel):
+    ticker: str
+    company_name: str | None = None
+    sector: str | None = None
+    benchmark_ticker: str | None = None
+    benchmark_name: str | None = None
+    trade_date: date
+    close_price: float
+    previous_close_price: float | None = None
+    price_change_pct: float
+    benchmark_price_change_pct: float | None = None
+    relative_price_change_pct: float | None = None
+    volume_vs_avg_ratio: float
+    drawdown_pct: float | None = None
+    rolling_return_7d_pct: float | None = None
+    rolling_volatility_7d: float | None = None
+    sharpe_like_ratio_7d: float | None = None
+    anomaly_flag: str
+    anomaly_severity_score: float
+    market_regime_label: str
+    signal_strength_score: float
+    feature_generated_at: datetime
+
+
+class SignalFeatureResponse(BaseModel):
+    ticker: str
+    count: int
+    data: list[SignalFeatureRow]
