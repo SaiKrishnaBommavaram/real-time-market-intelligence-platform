@@ -32,3 +32,10 @@ sources:
           - name: inserted_at
             tests:
               - not_null
+      - name: symbol_reference
+        description: "Canonical ticker, company, sector, and benchmark mapping reference."
+        columns:
+          - name: canonical_ticker
+            tests:
+              - not_null
+              - unique
