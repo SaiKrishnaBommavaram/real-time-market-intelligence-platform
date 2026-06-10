@@ -79,3 +79,58 @@ CREATE TABLE IF NOT EXISTS public.dashboard_watchlists (
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_watchlists_principal
 ON public.dashboard_watchlists (principal_id, ticker);
+
+CREATE TABLE IF NOT EXISTS public.symbol_reference (
+    canonical_ticker VARCHAR(10) PRIMARY KEY,
+    company_name VARCHAR(255) NOT NULL,
+    sector VARCHAR(100) NOT NULL,
+    benchmark_ticker VARCHAR(10),
+    benchmark_name VARCHAR(255),
+    benchmark_kind VARCHAR(50) NOT NULL DEFAULT 'broad_market',
+    aliases TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    is_benchmark BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO public.symbol_reference (
+    canonical_ticker,
+    company_name,
+    sector,
+    benchmark_ticker,
+    benchmark_name,
+    benchmark_kind,
+    aliases,
+    is_benchmark
+)
+VALUES
+    ('AAPL', 'Apple Inc.', 'Technology', 'XLK', 'Technology Select Sector SPDR Fund', 'sector_etf', ARRAY['Apple', 'Apple Inc', 'iPhone maker'], FALSE),
+    ('MSFT', 'Microsoft Corporation', 'Technology', 'XLK', 'Technology Select Sector SPDR Fund', 'sector_etf', ARRAY['Microsoft', 'Microsoft Corp', 'Azure'], FALSE),
+    ('NVDA', 'NVIDIA Corporation', 'Technology', 'XLK', 'Technology Select Sector SPDR Fund', 'sector_etf', ARRAY['NVIDIA', 'Nvidia', 'GeForce'], FALSE),
+    ('AMD', 'Advanced Micro Devices, Inc.', 'Technology', 'XLK', 'Technology Select Sector SPDR Fund', 'sector_etf', ARRAY['AMD', 'Advanced Micro Devices', 'Ryzen'], FALSE),
+    ('INTC', 'Intel Corporation', 'Technology', 'XLK', 'Technology Select Sector SPDR Fund', 'sector_etf', ARRAY['Intel', 'Intel Corp'], FALSE),
+    ('GOOGL', 'Alphabet Inc.', 'Communication Services', 'XLC', 'Communication Services Select Sector SPDR Fund', 'sector_etf', ARRAY['Alphabet', 'Google', 'Alphabet Inc'], FALSE),
+    ('META', 'Meta Platforms, Inc.', 'Communication Services', 'XLC', 'Communication Services Select Sector SPDR Fund', 'sector_etf', ARRAY['Meta', 'Facebook', 'Instagram'], FALSE),
+    ('NFLX', 'Netflix, Inc.', 'Communication Services', 'XLC', 'Communication Services Select Sector SPDR Fund', 'sector_etf', ARRAY['Netflix', 'Netflix Inc'], FALSE),
+    ('AMZN', 'Amazon.com, Inc.', 'Consumer Discretionary', 'XLY', 'Consumer Discretionary Select Sector SPDR Fund', 'sector_etf', ARRAY['Amazon', 'Amazon.com', 'AWS'], FALSE),
+    ('TSLA', 'Tesla, Inc.', 'Consumer Discretionary', 'XLY', 'Consumer Discretionary Select Sector SPDR Fund', 'sector_etf', ARRAY['Tesla', 'Tesla Inc'], FALSE),
+    ('JPM', 'JPMorgan Chase & Co.', 'Financials', 'XLF', 'Financial Select Sector SPDR Fund', 'sector_etf', ARRAY['JPMorgan', 'JP Morgan', 'JPMorgan Chase'], FALSE),
+    ('BAC', 'Bank of America Corporation', 'Financials', 'XLF', 'Financial Select Sector SPDR Fund', 'sector_etf', ARRAY['Bank of America', 'BofA', 'BAC'], FALSE),
+    ('XOM', 'Exxon Mobil Corporation', 'Energy', 'XLE', 'Energy Select Sector SPDR Fund', 'sector_etf', ARRAY['Exxon', 'Exxon Mobil'], FALSE),
+    ('CVX', 'Chevron Corporation', 'Energy', 'XLE', 'Energy Select Sector SPDR Fund', 'sector_etf', ARRAY['Chevron', 'Chevron Corp'], FALSE),
+    ('SPY', 'SPDR S&P 500 ETF Trust', 'Benchmark', NULL, NULL, 'broad_market', ARRAY['SPY', 'S&P 500'], TRUE),
+    ('XLK', 'Technology Select Sector SPDR Fund', 'Technology', 'SPY', 'SPDR S&P 500 ETF Trust', 'broad_market', ARRAY['XLK', 'Technology Select Sector SPDR Fund'], TRUE),
+    ('XLC', 'Communication Services Select Sector SPDR Fund', 'Communication Services', 'SPY', 'SPDR S&P 500 ETF Trust', 'broad_market', ARRAY['XLC', 'Communication Services Select Sector SPDR Fund'], TRUE),
+    ('XLY', 'Consumer Discretionary Select Sector SPDR Fund', 'Consumer Discretionary', 'SPY', 'SPDR S&P 500 ETF Trust', 'broad_market', ARRAY['XLY', 'Consumer Discretionary Select Sector SPDR Fund'], TRUE),
+    ('XLF', 'Financial Select Sector SPDR Fund', 'Financials', 'SPY', 'SPDR S&P 500 ETF Trust', 'broad_market', ARRAY['XLF', 'Financial Select Sector SPDR Fund'], TRUE),
+    ('XLE', 'Energy Select Sector SPDR Fund', 'Energy', 'SPY', 'SPDR S&P 500 ETF Trust', 'broad_market', ARRAY['XLE', 'Energy Select Sector SPDR Fund'], TRUE)
+ON CONFLICT (canonical_ticker)
+DO UPDATE SET
+    company_name = EXCLUDED.company_name,
+    sector = EXCLUDED.sector,
+    benchmark_ticker = EXCLUDED.benchmark_ticker,
+    benchmark_name = EXCLUDED.benchmark_name,
+    benchmark_kind = EXCLUDED.benchmark_kind,
+    aliases = EXCLUDED.aliases,
+    is_benchmark = EXCLUDED.is_benchmark,
+    updated_at = NOW();
