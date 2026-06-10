@@ -9,6 +9,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from api.config import settings
 from api.observability import increment_metric
+from market_symbols import build_news_query_terms, find_canonical_entities, get_symbol_profile, normalize_ticker
 
 
 _summarizer_tokenizer = None
@@ -75,6 +76,11 @@ HIGH_QUALITY_DOMAINS = {
 
 
 def fetch_news_articles(ticker: str):
+    normalized_ticker = normalize_ticker(ticker)
+    symbol_profile = get_symbol_profile(normalized_ticker)
+    query_terms = build_news_query_terms(normalized_ticker)
+    query = " OR ".join(f'"{term}"' for term in query_terms[:3])
+
     if not settings.news_api_key:
         increment_metric("api.news.config_missing")
         raise HTTPException(
@@ -86,7 +92,7 @@ def fetch_news_articles(ticker: str):
         response = requests.get(
             "https://newsapi.org/v2/everything",
             params={
-                "q": ticker,
+                "q": query,
                 "pageSize": 8,
                 "apiKey": settings.news_api_key,
                 "sortBy": "publishedAt",
@@ -123,8 +129,10 @@ def fetch_news_articles(ticker: str):
             "published_at": article.get("publishedAt"),
             "source_name": (article.get("source") or {}).get("name"),
             "sentiment": round(sentiment, 4),
+            "canonical_ticker": normalized_ticker,
+            "company_name": symbol_profile["company_name"],
         }
-        articles.append(enrich_news_article(ticker, enriched_article))
+        articles.append(enrich_news_article(normalized_ticker, enriched_article))
 
     deduped_articles = dedupe_articles(articles)
     increment_metric("api.news.provider_success")
@@ -169,8 +177,12 @@ def extract_entities(text: str, ticker: str):
     if not normalized_text:
         return []
 
+    canonical_matches = find_canonical_entities(normalized_text, ticker)
     raw_entities = re.findall(r"\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*\b", normalized_text)
     filtered_entities = []
+
+    for entity in canonical_matches:
+        filtered_entities.append(entity)
 
     for entity in raw_entities:
         cleaned = entity.strip()
@@ -258,6 +270,7 @@ def score_news_impact(article: dict):
 
 
 def enrich_news_article(ticker: str, article: dict):
+    symbol_profile = get_symbol_profile(ticker)
     article_text = " ".join(
         filter(None, [article.get("title"), article.get("description")]),
     ).strip()
@@ -269,6 +282,9 @@ def enrich_news_article(ticker: str, article: dict):
         "entities": entities,
         "source_quality_score": source_quality_score,
         "cluster": infer_topic_cluster(article),
+        "canonical_ticker": symbol_profile["ticker"],
+        "company_name": symbol_profile["company_name"],
+        "canonical_entity_matches": find_canonical_entities(article_text, ticker),
     }
     impact_score, impact_label = score_news_impact(enriched_article)
     enriched_article["impact_score"] = impact_score
