@@ -8,16 +8,24 @@ from dotenv import load_dotenv
 from kafka.errors import KafkaError
 from kafka import KafkaProducer
 
+from market_calendar import infer_market_session
+from market_symbols import get_symbol_profile, normalize_ticker, resolve_tracked_tickers
 from pipeline_runtime import get_logger, increment_metric, log_metrics_snapshot, retry, set_gauge
 
 
 load_dotenv()
 
 TOPIC_NAME = os.getenv("MARKET_KAFKA_TOPIC", "stock_prices")
-TICKERS = [ticker.strip() for ticker in os.getenv(
-    "MARKET_TICKERS",
-    "AAPL,MSFT,GOOGL,AMZN,NVDA",
-).split(",") if ticker.strip()]
+TICKERS = resolve_tracked_tickers(
+    [
+        ticker.strip()
+        for ticker in os.getenv(
+            "MARKET_TICKERS",
+            "AAPL,MSFT,GOOGL,AMZN,NVDA",
+        ).split(",")
+        if ticker.strip()
+    ]
+)
 PRODUCER_POLL_SECONDS = int(os.getenv("MARKET_PRODUCER_POLL_SECONDS", "60"))
 PRODUCER_MAX_RETRIES = int(os.getenv("MARKET_PRODUCER_MAX_RETRIES", "3"))
 PRODUCER_BACKOFF_SECONDS = float(os.getenv("MARKET_PRODUCER_BACKOFF_SECONDS", "1"))
@@ -40,15 +48,18 @@ def create_producer():
 
 
 def fetch_stock_event(ticker):
-    stock = yf.Ticker(ticker)
+    canonical_ticker = normalize_ticker(ticker)
+    profile = get_symbol_profile(canonical_ticker)
+    stock = yf.Ticker(canonical_ticker)
     info = stock.fast_info
     price = round(float(info["last_price"]), 2)
+    event_time = datetime.now(timezone.utc)
 
     return {
-        "ticker": ticker,
+        "ticker": canonical_ticker,
         "price": price,
         "volume": int(info.get("last_volume") or 0),
-        "event_time": datetime.now(timezone.utc).isoformat(),
+        "event_time": event_time.isoformat(),
         "source": "yfinance",
         "open_price": price,
         "high_price": price,
@@ -56,7 +67,11 @@ def fetch_stock_event(ticker):
         "close_price": price,
         "event_kind": "live_snapshot",
         "bar_interval": "snapshot",
-        "market_session": "regular",
+        "market_session": infer_market_session(event_time),
+        "company_name": profile["company_name"],
+        "sector": profile["sector"],
+        "benchmark_ticker": profile["benchmark_ticker"],
+        "benchmark_name": profile["benchmark_name"],
     }
 
 
@@ -115,7 +130,9 @@ def normalize_event_time(index_value):
 
 
 def build_historical_events(ticker):
-    stock = yf.Ticker(ticker)
+    canonical_ticker = normalize_ticker(ticker)
+    profile = get_symbol_profile(canonical_ticker)
+    stock = yf.Ticker(canonical_ticker)
     history = stock.history(period=HISTORY_PERIOD, interval=HISTORY_INTERVAL, auto_adjust=False)
 
     if history.empty:
@@ -135,7 +152,7 @@ def build_historical_events(ticker):
 
         events.append(
             {
-                "ticker": ticker,
+                "ticker": canonical_ticker,
                 "price": round(float(close_price), 2),
                 "volume": int(row.get("Volume") or 0),
                 "event_time": event_time.isoformat(),
@@ -146,7 +163,11 @@ def build_historical_events(ticker):
                 "close_price": round(float(close_price), 2),
                 "event_kind": "historical_bar",
                 "bar_interval": HISTORY_INTERVAL,
-                "market_session": "historical",
+                "market_session": infer_market_session(event_time),
+                "company_name": profile["company_name"],
+                "sector": profile["sector"],
+                "benchmark_ticker": profile["benchmark_ticker"],
+                "benchmark_name": profile["benchmark_name"],
             }
         )
 
