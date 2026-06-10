@@ -13,6 +13,8 @@ from api.services.news_service import (
     is_low_quality_summary,
     summarize_news_with_local_model,
 )
+from market_calendar import get_market_calendar_context, infer_market_session, serialize_market_context
+from market_symbols import get_symbol_profile, normalize_ticker
 
 
 class MarketService:
@@ -23,6 +25,7 @@ class MarketService:
         return self.repository.get_cache_status(row, expires_field, updated_field)
 
     def _build_fresh_cache_metadata(self, ttl_minutes: int):
+        market_context = get_market_calendar_context()
         expires_at = datetime.now(timezone.utc).timestamp() + (ttl_minutes * 60)
         return {
             "state": "fresh",
@@ -30,6 +33,8 @@ class MarketService:
             "expires_at": datetime.fromtimestamp(expires_at, timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "stale_by_seconds": None,
+            "freshness_reason": "fresh_within_ttl",
+            "market_context": serialize_market_context(market_context),
         }
 
     def get_root_payload(self):
@@ -53,6 +58,7 @@ class MarketService:
                 "/analytics/risk",
                 "/analytics/sectors",
                 "/analytics/anomalies",
+                "/analytics/features/{ticker}",
                 "/watchlist",
                 "/watchlist/alerts",
                 "/observability/metrics",
@@ -85,7 +91,7 @@ class MarketService:
         }
 
     def get_stock_summary(self, ticker: str):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
         rows = self.repository.fetch_stock_summary(normalized_ticker)
 
         if not rows:
@@ -101,7 +107,9 @@ class MarketService:
         }
 
     def get_live_stock_data(self, ticker: str):
-        normalized_ticker = ticker.strip().upper()
+        normalized_ticker = normalize_ticker(ticker)
+        symbol_profile = get_symbol_profile(normalized_ticker)
+        market_context = get_market_calendar_context()
         cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
         live_cache = self._build_cache_metadata(
             cached_row,
@@ -131,10 +139,16 @@ class MarketService:
 
             payload = {
                 "ticker": normalized_ticker,
+                "company_name": symbol_profile["company_name"],
+                "sector": symbol_profile["sector"],
+                "benchmark_ticker": symbol_profile["benchmark_ticker"],
+                "benchmark_name": symbol_profile["benchmark_name"],
                 "price": round(float(price), 2),
                 "volume": int(volume or 0),
                 "event_time": datetime.now(timezone.utc).isoformat(),
                 "source": "yfinance_live_api",
+                "market_session": infer_market_session(datetime.now(timezone.utc)),
+                "market_context": serialize_market_context(market_context),
                 "cache": self._build_fresh_cache_metadata(settings.live_cache_ttl_minutes),
             }
             self.repository.upsert_live_stock_cache(normalized_ticker, payload)
@@ -151,10 +165,16 @@ class MarketService:
                 increment_metric("api.cache.live.stale_fallback")
                 return {
                     "ticker": normalized_ticker,
+                    "company_name": symbol_profile["company_name"],
+                    "sector": symbol_profile["sector"],
+                    "benchmark_ticker": symbol_profile["benchmark_ticker"],
+                    "benchmark_name": symbol_profile["benchmark_name"],
                     "price": round(float(cached_row["live_price"]), 2),
                     "volume": int(cached_row.get("live_volume") or 0),
                     "event_time": cached_row["live_event_time"].isoformat(),
                     "source": "daily_cache_stale",
+                    "market_session": market_context["session"],
+                    "market_context": serialize_market_context(market_context),
                     "cache": live_cache,
                 }
 
@@ -175,7 +195,7 @@ class MarketService:
             )
 
     def get_stock_news(self, ticker: str):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
         cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
         news_cache = self._build_cache_metadata(
             cached_row,
@@ -231,7 +251,7 @@ class MarketService:
             raise
 
     def get_stock_news_summary(self, ticker: str):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
 
         try:
             cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
@@ -319,7 +339,7 @@ class MarketService:
             return summary
 
     def get_intraday_candles(self, ticker: str, limit: int = 48):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
         rows = self.repository.fetch_intraday_candles(normalized_ticker, limit=limit)
         return {
             "ticker": normalized_ticker,
@@ -349,7 +369,7 @@ class MarketService:
         }
 
     def get_sentiment_over_time(self, ticker: str, limit: int = 30):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
         rows = self.repository.fetch_sentiment_over_time(normalized_ticker, limit=limit)
 
         return {
@@ -359,7 +379,7 @@ class MarketService:
         }
 
     def get_ticker_correlation(self, ticker: str, limit: int = 8):
-        normalized_ticker = ticker.upper()
+        normalized_ticker = normalize_ticker(ticker)
         rows = self.repository.fetch_ticker_correlation(normalized_ticker, limit=limit)
 
         return {
@@ -390,7 +410,7 @@ class MarketService:
         }
 
     def get_anomaly_history(self, limit: int = 50, ticker: str | None = None):
-        normalized_ticker = ticker.upper() if ticker else None
+        normalized_ticker = normalize_ticker(ticker) if ticker else None
         rows = self.repository.fetch_anomaly_history(limit=limit, ticker=normalized_ticker)
         return {
             "count": len(rows),
@@ -414,7 +434,7 @@ class MarketService:
     ):
         row = self.repository.upsert_watchlist_item(
             principal_id=principal_id,
-            ticker=ticker.upper(),
+            ticker=normalize_ticker(ticker),
             price_alert_threshold=price_alert_threshold,
             volume_alert_threshold=volume_alert_threshold,
         )
@@ -422,7 +442,7 @@ class MarketService:
         return row
 
     def delete_watchlist_item(self, principal_id: str, ticker: str):
-        deleted_count = self.repository.delete_watchlist_item(principal_id, ticker.upper())
+        deleted_count = self.repository.delete_watchlist_item(principal_id, normalize_ticker(ticker))
         increment_metric("api.watchlist.delete")
         return {"deleted": deleted_count > 0}
 
@@ -436,6 +456,15 @@ class MarketService:
 
     def get_observability_metrics(self):
         return get_metrics_snapshot()
+
+    def get_signal_features(self, ticker: str, limit: int = 30):
+        normalized_ticker = normalize_ticker(ticker)
+        rows = self.repository.fetch_signal_features(normalized_ticker, limit=limit)
+        return {
+            "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
 
 
 market_service = MarketService(market_repository)
