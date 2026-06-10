@@ -7,6 +7,10 @@ models:
       - name: ticker
         tests:
           - not_null
+      - name: company_name
+      - name: sector
+      - name: benchmark_ticker
+      - name: benchmark_name
       - name: trade_date
         tests:
           - not_null
@@ -35,6 +39,9 @@ models:
         tests:
           - not_null
       - name: previous_close_price
+      - name: benchmark_close_price
+      - name: benchmark_price_change_pct
+      - name: relative_price_change_pct
       - name: price_change_pct
         tests:
           - not_null
@@ -53,7 +60,14 @@ models:
       - name: ticker
         tests:
           - not_null
+      - name: company_name
+      - name: sector
+      - name: benchmark_ticker
+      - name: benchmark_name
       - name: interval_start
+        tests:
+          - not_null
+      - name: market_session
         tests:
           - not_null
       - name: open_price
@@ -68,6 +82,10 @@ models:
       - name: close_price
         tests:
           - not_null
+      - name: previous_close_price
+      - name: benchmark_close_price
+      - name: benchmark_interval_change_pct
+      - name: relative_interval_change_pct
       - name: bar_count
         tests:
           - not_null
@@ -149,6 +167,9 @@ models:
       - name: avg_price_change_pct
         tests:
           - not_null
+      - name: avg_relative_price_change_pct
+        tests:
+          - not_null
       - name: avg_volume_ratio
         tests:
           - not_null
@@ -194,3 +215,24 @@ models:
       - name: total_volume
         tests:
           - not_null
+  - name: stock_signal_feature_store
+    description: "Reusable daily feature store for ranking, anomaly scoring, and benchmark-relative signals."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: signal_strength_score
+        tests:
+          - not_null
+      - name: market_regime_label
+        tests:
+          - not_null
+      - name: feature_generated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "ticker || '-' || trade_date::text"
