@@ -48,3 +48,16 @@ models:
       - name: market_session
         tests:
           - not_null
+  - name: stg_symbol_reference
+    description: "Canonical ticker dimension used to normalize company, sector, and benchmark metadata."
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - unique
+      - name: company_name
+        tests:
+          - not_null
+      - name: sector
+        tests:
+          - not_null
