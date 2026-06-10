@@ -18,6 +18,7 @@ from api.schemas import (
     ReadinessResponse,
     RootResponse,
     SectorPerformanceResponse,
+    SignalFeatureResponse,
     SentimentTrendResponse,
     StockNewsResponse,
     StockSummaryResponse,
@@ -165,6 +166,14 @@ def get_sector_performance(limit: int = 20):
 def get_anomaly_history(limit: int = 50, ticker: str | None = None):
     try:
         return market_service.get_anomaly_history(limit=limit, ticker=ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/features/{ticker}", response_model=SignalFeatureResponse)
+def get_signal_features(ticker: str, limit: int = 30):
+    try:
+        return market_service.get_signal_features(ticker, limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
