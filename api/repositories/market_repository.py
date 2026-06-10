@@ -4,6 +4,7 @@ from psycopg2.extras import Json
 
 from api.database import get_db_connection
 from api.config import settings
+from market_calendar import get_market_calendar_context, serialize_market_context
 
 
 class MarketRepository:
@@ -59,6 +60,10 @@ class MarketRepository:
             """
             SELECT
                 ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
                 trade_date,
                 event_count,
                 avg_price,
@@ -69,6 +74,9 @@ class MarketRepository:
                 open_price,
                 close_price,
                 previous_close_price,
+                benchmark_close_price,
+                benchmark_price_change_pct,
+                relative_price_change_pct,
                 price_change_pct,
                 volume_vs_avg_ratio,
                 anomaly_flag
@@ -89,6 +97,10 @@ class MarketRepository:
             """
             SELECT
                 ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
                 trade_date,
                 event_count,
                 avg_price,
@@ -99,6 +111,9 @@ class MarketRepository:
                 open_price,
                 close_price,
                 previous_close_price,
+                benchmark_close_price,
+                benchmark_price_change_pct,
+                relative_price_change_pct,
                 price_change_pct,
                 volume_vs_avg_ratio,
                 anomaly_flag
@@ -124,16 +139,23 @@ class MarketRepository:
             )
             SELECT
                 ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
                 trade_date,
                 close_price,
                 previous_close_price,
+                benchmark_close_price,
+                benchmark_price_change_pct,
+                relative_price_change_pct,
                 price_change_pct,
                 total_volume,
                 volume_vs_avg_ratio,
                 anomaly_flag
             FROM analytics.daily_stock_summary
             WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
-            ORDER BY ABS(price_change_pct) DESC, total_volume DESC
+            ORDER BY ABS(COALESCE(relative_price_change_pct, price_change_pct)) DESC, total_volume DESC
             LIMIT %s;
             """,
             (limit,),
@@ -150,11 +172,20 @@ class MarketRepository:
             """
             SELECT
                 ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
                 interval_start,
+                market_session,
                 open_price,
                 high_price,
                 low_price,
                 close_price,
+                previous_close_price,
+                benchmark_close_price,
+                benchmark_interval_change_pct,
+                relative_interval_change_pct,
                 bar_count,
                 total_volume,
                 last_updated_at
@@ -178,37 +209,57 @@ class MarketRepository:
             WITH ranked AS (
                 SELECT
                     ticker,
+                    company_name,
+                    sector,
+                    benchmark_ticker,
+                    benchmark_name,
                     interval_start,
+                    market_session,
                     close_price,
+                    previous_close_price,
+                    benchmark_interval_change_pct,
+                    relative_interval_change_pct,
                     total_volume,
                     bar_count,
-                    LAG(close_price) OVER (
-                        PARTITION BY ticker
-                        ORDER BY interval_start
-                    ) AS previous_close_price,
                     ROW_NUMBER() OVER (
                         PARTITION BY ticker
                         ORDER BY interval_start DESC
                     ) AS row_num
                 FROM analytics.intraday_stock_rollup
+                WHERE market_session <> 'closed'
             )
             SELECT
                 ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
                 interval_start,
+                market_session,
                 close_price,
                 previous_close_price,
-                ROUND(
+                ROUND(COALESCE(
+                    relative_interval_change_pct,
                     CASE
                         WHEN previous_close_price IS NULL OR previous_close_price = 0 THEN NULL
                         ELSE ((close_price - previous_close_price) / previous_close_price) * 100
-                    END,
-                    4
-                ) AS interval_change_pct,
+                    END
+                ), 4) AS interval_change_pct,
+                benchmark_interval_change_pct,
+                relative_interval_change_pct,
                 total_volume,
                 bar_count
             FROM ranked
             WHERE row_num = 1
-            ORDER BY ABS(interval_change_pct) DESC NULLS LAST, total_volume DESC
+            ORDER BY ABS(
+                COALESCE(
+                    relative_interval_change_pct,
+                    CASE
+                        WHEN previous_close_price IS NULL OR previous_close_price = 0 THEN NULL
+                        ELSE ((close_price - previous_close_price) / previous_close_price) * 100
+                    END
+                )
+            ) DESC NULLS LAST, total_volume DESC
             LIMIT %s;
             """,
             (limit,),
@@ -349,6 +400,7 @@ class MarketRepository:
                 trade_date,
                 ticker_count,
                 avg_price_change_pct,
+                avg_relative_price_change_pct,
                 avg_volume_ratio,
                 total_volume,
                 anomaly_count,
@@ -356,7 +408,7 @@ class MarketRepository:
                 top_ticker_price_change_pct
             FROM analytics.sector_daily_summary
             WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
-            ORDER BY avg_price_change_pct DESC, total_volume DESC
+            ORDER BY COALESCE(avg_relative_price_change_pct, avg_price_change_pct) DESC, total_volume DESC
             LIMIT %s;
             """,
             (limit,),
@@ -374,13 +426,18 @@ class MarketRepository:
             cur.execute(
                 """
                 SELECT
-                    ticker,
-                    trade_date,
-                    anomaly_flag,
-                    anomaly_severity_score,
-                    price_change_pct,
-                    volume_vs_avg_ratio,
-                    close_price,
+                ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
+                trade_date,
+                anomaly_flag,
+                anomaly_severity_score,
+                relative_price_change_pct,
+                price_change_pct,
+                volume_vs_avg_ratio,
+                close_price,
                     total_volume
                 FROM analytics.stock_anomaly_history
                 WHERE ticker = %s
@@ -393,13 +450,18 @@ class MarketRepository:
             cur.execute(
                 """
                 SELECT
-                    ticker,
-                    trade_date,
-                    anomaly_flag,
-                    anomaly_severity_score,
-                    price_change_pct,
-                    volume_vs_avg_ratio,
-                    close_price,
+                ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
+                trade_date,
+                anomaly_flag,
+                anomaly_severity_score,
+                relative_price_change_pct,
+                price_change_pct,
+                volume_vs_avg_ratio,
+                close_price,
                     total_volume
                 FROM analytics.stock_anomaly_history
                 ORDER BY trade_date DESC, anomaly_severity_score DESC
@@ -419,14 +481,20 @@ class MarketRepository:
         cur.execute(
             """
             SELECT
-                ticker,
+                watchlist.ticker,
+                symbols.company_name,
+                symbols.sector,
+                symbols.benchmark_ticker,
+                symbols.benchmark_name,
                 price_alert_threshold,
                 volume_alert_threshold,
                 created_at,
                 updated_at
-            FROM dashboard_watchlists
-            WHERE principal_id = %s
-            ORDER BY ticker;
+            FROM dashboard_watchlists AS watchlist
+            LEFT JOIN public.symbol_reference AS symbols
+                ON watchlist.ticker = symbols.canonical_ticker
+            WHERE watchlist.principal_id = %s
+            ORDER BY watchlist.ticker;
             """,
             (principal_id,),
         )
@@ -498,8 +566,13 @@ class MarketRepository:
             """
             SELECT
                 watchlist.ticker,
+                symbols.company_name,
+                symbols.sector,
+                symbols.benchmark_ticker,
+                symbols.benchmark_name,
                 summary.trade_date,
                 summary.close_price,
+                summary.relative_price_change_pct,
                 summary.price_change_pct,
                 summary.volume_vs_avg_ratio,
                 summary.anomaly_flag,
@@ -510,6 +583,8 @@ class MarketRepository:
             FROM dashboard_watchlists AS watchlist
             INNER JOIN analytics.daily_stock_summary AS summary
                 ON watchlist.ticker = summary.ticker
+            LEFT JOIN public.symbol_reference AS symbols
+                ON watchlist.ticker = symbols.canonical_ticker
             WHERE watchlist.principal_id = %s
             AND (
                 ABS(summary.price_change_pct) >= watchlist.price_alert_threshold
@@ -575,6 +650,7 @@ class MarketRepository:
         return row
 
     def get_cache_status(self, row: dict | None, expires_field: str, updated_field: str):
+        market_context = get_market_calendar_context()
         if not row:
             return {
                 "state": "miss",
@@ -582,6 +658,8 @@ class MarketRepository:
                 "expires_at": None,
                 "updated_at": None,
                 "stale_by_seconds": None,
+                "freshness_reason": "cache_miss",
+                "market_context": serialize_market_context(market_context),
             }
 
         now = datetime.now(timezone.utc)
@@ -589,6 +667,16 @@ class MarketRepository:
         updated_at = row.get(updated_field)
         is_stale = expires_at is None or expires_at <= now
         stale_by_seconds = None
+        freshness_reason = "ttl_expired" if is_stale else "fresh_within_ttl"
+
+        if (
+            is_stale
+            and updated_at
+            and not market_context["is_market_open"]
+            and updated_at >= market_context["last_session_close_at"]
+        ):
+            is_stale = False
+            freshness_reason = "market_closed_since_last_update"
 
         if expires_at and is_stale:
             stale_by_seconds = max(int((now - expires_at).total_seconds()), 0)
@@ -599,7 +687,48 @@ class MarketRepository:
             "expires_at": expires_at.isoformat() if expires_at else None,
             "updated_at": updated_at.isoformat() if updated_at else None,
             "stale_by_seconds": stale_by_seconds,
+            "freshness_reason": freshness_reason,
+            "market_context": serialize_market_context(market_context),
         }
+
+    def fetch_signal_features(self, ticker: str, limit: int = 30):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                ticker,
+                company_name,
+                sector,
+                benchmark_ticker,
+                benchmark_name,
+                trade_date,
+                close_price,
+                previous_close_price,
+                price_change_pct,
+                benchmark_price_change_pct,
+                relative_price_change_pct,
+                volume_vs_avg_ratio,
+                drawdown_pct,
+                rolling_return_7d_pct,
+                rolling_volatility_7d,
+                sharpe_like_ratio_7d,
+                anomaly_flag,
+                anomaly_severity_score,
+                market_regime_label,
+                signal_strength_score,
+                feature_generated_at
+            FROM analytics.stock_signal_feature_store
+            WHERE ticker = %s
+            ORDER BY trade_date DESC
+            LIMIT %s;
+            """,
+            (ticker, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return rows
 
     def upsert_live_stock_cache(self, ticker: str, payload: dict):
         self.verify_stock_search_cache_table()
