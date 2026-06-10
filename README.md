@@ -15,7 +15,7 @@ An end-to-end market data platform that:
 ### Data flow
 
 1. `producers/stock_producer.py` fetches live prices for the configured ticker list.
-2. The producer publishes JSON events to the Kafka topic in `MARKET_KAFKA_TOPIC`.
+2. The producer normalizes tracked symbols to a canonical catalog, auto-includes benchmark ETFs, and publishes JSON events to the Kafka topic in `MARKET_KAFKA_TOPIC`.
 3. `consumers/postgres_consumer.py` consumes those events into `public.stock_prices`.
 4. `consumers/s3_consumer.py` writes the same raw events into the S3 bucket path `raw/stocks/date=.../ticker=.../`.
 5. dbt reads `public.stock_prices` and builds analytics models, including `analytics.daily_stock_summary`.
@@ -25,7 +25,7 @@ An end-to-end market data platform that:
    - ticker news from NewsAPI
    - enriched news analysis with source quality, entity extraction, clustering, and impact scoring
    - local news summaries using a Hugging Face summarization model
-   - analytics endpoints for movers, volatility, sentiment-over-time, ticker correlation, and intraday rollups
+   - analytics endpoints for movers, volatility, sentiment-over-time, ticker correlation, intraday rollups, and reusable signal features
    - persisted watchlists and watchlist alert history scoped to the active API principal
    - an observability metrics snapshot for API cache/auth/request behavior
    - route handlers from `api/routes/`
@@ -74,6 +74,7 @@ Important variables:
 - `MARKET_KAFKA_*`: Kafka connection and topic
 - `MARKET_S3_*`: MinIO/S3 connection and bucket
 - `MARKET_PRODUCER_POLL_SECONDS`, `MARKET_PRODUCER_MAX_RETRIES`, `MARKET_PRODUCER_BACKOFF_SECONDS`: producer polling and retry behavior
+- `MARKET_TICKERS`: tracked symbols; the producer auto-adds benchmark ETFs from the canonical symbol catalog
 - `MARKET_ENABLE_HISTORY_BACKFILL`, `MARKET_HISTORY_PERIOD`, `MARKET_HISTORY_INTERVAL`, `MARKET_HISTORY_LOOKBACK_DAYS`: producer-driven historical backfill and intraday bar settings
 - `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
@@ -253,11 +254,14 @@ The dbt project now includes:
 - stronger schema tests for source, staging, and mart models
 - singular tests for duplicate raw events and invalid summary price bounds
 - hourly intraday rollups in `analytics.intraday_stock_rollup`
+- canonical symbol normalization through `public.symbol_reference` and `stg_symbol_reference`
 - daily anomaly fields such as `price_change_pct`, `volume_vs_avg_ratio`, and `anomaly_flag`
+- benchmark-relative fields such as `benchmark_price_change_pct` and `relative_price_change_pct`
 - drawdown and recovery analytics in `analytics.stock_drawdown_recovery`
 - rolling volatility and Sharpe-like indicators in `analytics.stock_risk_indicators`
 - sector-level daily aggregates in `analytics.sector_daily_summary`
 - anomaly history records in `analytics.stock_anomaly_history`
+- reusable ranking features in `analytics.stock_signal_feature_store`
 
 ### 9. Start the API
 
@@ -285,6 +289,7 @@ Additional analytics routes:
 - `/analytics/risk`
 - `/analytics/sectors`
 - `/analytics/anomalies`
+- `/analytics/features/{ticker}`
 
 Watchlist and observability routes:
 
@@ -299,6 +304,8 @@ The watchlist routes are scoped to the current request principal. When `MARKET_A
 The observability endpoint reports API request counts/latency, auth and rate-limit events, cache hit vs stale fallback counters, and news-provider/summarizer counters. Producer and consumer processes now also emit periodic structured metric snapshots in their own logs.
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
+
+Freshness is now market-calendar-aware. Outside active US trading sessions, cache responses can remain fresh through the expected closed window instead of being marked stale simply because a TTL expired overnight or on a holiday.
 
 The API now separates liveness from readiness:
 
@@ -351,7 +358,7 @@ Reports startup readiness, including PostgreSQL connectivity and required cache-
 
 ### `GET /market/summary`
 
-Reads up to 100 rows from `analytics.daily_stock_summary`.
+Reads up to 100 rows from `analytics.daily_stock_summary`, including canonical company metadata and benchmark-relative move context.
 
 ### `GET /stocks/{ticker}/summary`
 
@@ -359,7 +366,11 @@ Returns warehouse summary history for one ticker from `analytics.daily_stock_sum
 
 ### `GET /stocks/{ticker}/live`
 
-Returns live price and volume from Yahoo Finance. The API caches successful lookups for the current UTC day in `stock_search_cache` and falls back to that cache if the provider later fails.
+Returns live price and volume from Yahoo Finance. The API normalizes symbols against the canonical symbol catalog, annotates the response with company and benchmark metadata, and uses market-calendar-aware cache freshness before falling back to cached values.
+
+### `GET /analytics/features/{ticker}`
+
+Returns daily feature-store rows from `analytics.stock_signal_feature_store` for reusable ranking, anomaly, volatility, drawdown, and benchmark-relative signals.
 
 ### `GET /stocks/{ticker}/news`
 
@@ -390,6 +401,7 @@ Operational tables:
 
 - `public.stock_prices`: raw streamed stock events
 - `public.stock_search_cache`: cached live-price and news responses created by the API
+- `public.symbol_reference`: canonical ticker, company, sector, alias, and benchmark metadata
 
 Analytics schema:
 
