@@ -2,38 +2,25 @@
     alias='sector_daily_summary'
 ) }}
 
-WITH sector_map AS (
-    SELECT *
-    FROM (
-        VALUES
-            ('AAPL', 'Technology'),
-            ('MSFT', 'Technology'),
-            ('NVDA', 'Technology'),
-            ('AMD', 'Technology'),
-            ('INTC', 'Technology'),
-            ('GOOGL', 'Communication Services'),
-            ('META', 'Communication Services'),
-            ('AMZN', 'Consumer Discretionary'),
-            ('TSLA', 'Consumer Discretionary'),
-            ('NFLX', 'Communication Services'),
-            ('JPM', 'Financials'),
-            ('BAC', 'Financials'),
-            ('XOM', 'Energy'),
-            ('CVX', 'Energy')
-    ) AS mapped(ticker, sector)
+WITH symbol_meta AS (
+    SELECT
+        ticker,
+        sector
+    FROM {{ ref('stg_symbol_reference') }}
 ),
 base AS (
     SELECT
         summary.ticker,
         summary.trade_date,
-        COALESCE(map.sector, 'Other') AS sector,
+        COALESCE(meta.sector, 'Other') AS sector,
         summary.price_change_pct,
+        summary.relative_price_change_pct,
         summary.volume_vs_avg_ratio,
         summary.total_volume,
         summary.anomaly_flag
     FROM {{ ref('daily_stock_summary') }} AS summary
-    LEFT JOIN sector_map AS map
-        ON summary.ticker = map.ticker
+    LEFT JOIN symbol_meta AS meta
+        ON summary.ticker = meta.ticker
 ),
 ranked AS (
     SELECT
@@ -49,6 +36,7 @@ SELECT
     trade_date,
     COUNT(*) AS ticker_count,
     ROUND(AVG(price_change_pct), 4) AS avg_price_change_pct,
+    ROUND(AVG(COALESCE(relative_price_change_pct, price_change_pct)), 4) AS avg_relative_price_change_pct,
     ROUND(AVG(volume_vs_avg_ratio), 4) AS avg_volume_ratio,
     SUM(total_volume) AS total_volume,
     COUNT(*) FILTER (WHERE anomaly_flag <> 'normal') AS anomaly_count,
