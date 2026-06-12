@@ -51,6 +51,17 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${MARKET_REDIS_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
   minio:
     image: minio/minio
     restart: unless-stopped
@@ -107,6 +118,42 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  api-job-worker:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      MARKET_ENV: ${MARKET_ENV:-local}
+      MARKET_DB_HOST: postgres
+      MARKET_DB_PORT: 5432
+      MARKET_DB_NAME: ${MARKET_DB_NAME:-market_data}
+      MARKET_DB_USER: ${MARKET_DB_USER:-postgres}
+      MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD:-postgres}
+      MARKET_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MARKET_REDIS_HOST: redis
+      MARKET_REDIS_PORT: 6379
+      MARKET_REDIS_DB: ${MARKET_REDIS_DB:-0}
+      MARKET_TICKERS: ${MARKET_TICKERS:-AAPL,MSFT,GOOGL,AMZN,NVDA}
+      MARKET_ENABLE_HISTORY_BACKFILL: ${MARKET_ENABLE_HISTORY_BACKFILL:-true}
+      MARKET_HISTORY_PERIOD: ${MARKET_HISTORY_PERIOD:-1mo}
+      MARKET_HISTORY_INTERVAL: ${MARKET_HISTORY_INTERVAL:-1h}
+      MARKET_HISTORY_LOOKBACK_DAYS: ${MARKET_HISTORY_LOOKBACK_DAYS:-30}
+      NEWS_API_KEY: ${NEWS_API_KEY:-}
+      LOCAL_SUMMARIZER_MODEL: ${LOCAL_SUMMARIZER_MODEL:-sshleifer/distilbart-cnn-12-6}
+      LOCAL_SUMMARIZER_MAX_LENGTH: ${LOCAL_SUMMARIZER_MAX_LENGTH:-90}
+      LOCAL_SUMMARIZER_MIN_LENGTH: ${LOCAL_SUMMARIZER_MIN_LENGTH:-35}
+      LOCAL_SUMMARIZER_INPUT_MAX_TOKENS: ${LOCAL_SUMMARIZER_INPUT_MAX_TOKENS:-1024}
+      ARTICLE_NOTE_MAX_LENGTH: ${ARTICLE_NOTE_MAX_LENGTH:-60}
+      ARTICLE_NOTE_MIN_LENGTH: ${ARTICLE_NOTE_MIN_LENGTH:-20}
+      MARKET_JOB_WORKER_POLL_SECONDS: ${MARKET_JOB_WORKER_POLL_SECONDS:-5}
+    command: python -m api.job_worker
 
 volumes:
   postgres_data:
