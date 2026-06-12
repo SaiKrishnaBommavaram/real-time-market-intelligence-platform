@@ -10,6 +10,7 @@ from market_calendar import get_market_calendar_context, serialize_market_contex
 class MarketRepository:
     def __init__(self):
         self._search_cache_table_verified = False
+        self._async_jobs_table_verified = False
 
     def _get_today_cache_date(self):
         return datetime.now(timezone.utc).date()
@@ -36,6 +37,25 @@ class MarketRepository:
 
         self._search_cache_table_verified = True
 
+    def verify_async_jobs_table(self):
+        if self._async_jobs_table_verified:
+            return
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT to_regclass('public.async_jobs') AS table_name;")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row or not row.get("table_name"):
+            raise RuntimeError(
+                "public.async_jobs does not exist. "
+                "Run the Postgres init SQL or Alembic migrations before starting the API."
+            )
+
+        self._async_jobs_table_verified = True
+
     def fetch_health_status(self):
         conn = get_db_connection()
         cur = conn.cursor()
@@ -48,10 +68,138 @@ class MarketRepository:
     def fetch_readiness_status(self):
         health_result = self.fetch_health_status()
         self.verify_stock_search_cache_table()
+        self.verify_async_jobs_table()
+        redis_ready = False
+        try:
+            from api.redis_client import get_redis_client
+
+            redis_ready = bool(get_redis_client().ping())
+        except Exception:
+            redis_ready = False
         return {
             "database": bool(health_result and health_result.get("status") == 1),
             "stock_search_cache_table": True,
+            "async_jobs_table": True,
+            "redis": redis_ready,
         }
+
+    def create_async_job(self, job_type: str, payload: dict, requested_by: str):
+        self.verify_async_jobs_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO public.async_jobs (
+                job_type,
+                status,
+                payload,
+                requested_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, 'pending', %s, %s, NOW(), NOW())
+            RETURNING *;
+            """,
+            (job_type, Json(payload), requested_by),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return row
+
+    def fetch_async_job(self, job_id: int):
+        self.verify_async_jobs_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM public.async_jobs
+            WHERE id = %s;
+            """,
+            (job_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row
+
+    def claim_pending_async_job(self):
+        self.verify_async_jobs_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH next_job AS (
+                SELECT id
+                FROM public.async_jobs
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE public.async_jobs AS jobs
+            SET
+                status = 'running',
+                started_at = NOW(),
+                updated_at = NOW()
+            FROM next_job
+            WHERE jobs.id = next_job.id
+            RETURNING jobs.*;
+            """
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return row
+
+    def complete_async_job(self, job_id: int, result: dict):
+        self.verify_async_jobs_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE public.async_jobs
+            SET
+                status = 'succeeded',
+                result = %s,
+                error_message = NULL,
+                completed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s;
+            """,
+            (Json(result), job_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    def fail_async_job(self, job_id: int, error_message: str):
+        self.verify_async_jobs_table()
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE public.async_jobs
+            SET
+                status = 'failed',
+                error_message = %s,
+                completed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s;
+            """,
+            (error_message[:2000], job_id),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
 
     def fetch_market_summary(self):
         conn = get_db_connection()
