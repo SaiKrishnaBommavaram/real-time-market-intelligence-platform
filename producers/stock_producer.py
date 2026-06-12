@@ -222,6 +222,27 @@ def send_historical_backfill(producer):
             )
 
 
+def run_historical_backfill(target_tickers=None):
+    producer = create_producer()
+    tickers = target_tickers or TICKERS
+    processed = []
+
+    try:
+        for ticker in tickers:
+            events = fetch_historical_events_with_retry(ticker)
+            if not events:
+                continue
+            send_batch(producer, events)
+            processed.append({"ticker": ticker, "event_count": len(events)})
+        return {
+            "processed_tickers": len(processed),
+            "tickers": processed,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    finally:
+        producer.close()
+
+
 def main():
     producer = create_producer()
 
