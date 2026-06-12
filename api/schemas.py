@@ -38,6 +38,24 @@ class ReadinessResponse(BaseModel):
     checks: dict[str, bool]
 
 
+class AsyncJobRequest(BaseModel):
+    ticker: str | None = None
+
+
+class AsyncJobResponse(BaseModel):
+    id: int
+    job_type: str
+    status: str
+    payload: dict
+    result: dict | None = None
+    error_message: str | None = None
+    requested_by: str
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
 class DailySummaryRow(BaseModel):
     ticker: str
     company_name: str | None = None
