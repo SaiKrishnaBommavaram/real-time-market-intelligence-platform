@@ -3,6 +3,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.schemas import (
     AnomalyHistoryResponse,
+    AsyncJobRequest,
+    AsyncJobResponse,
     DeleteResponse,
     CorrelationResponse,
     DrawdownRecoveryResponse,
@@ -28,6 +30,7 @@ from api.schemas import (
     WatchlistResponse,
     WatchlistUpsertRequest,
 )
+from api.services.async_job_service import async_job_service
 from api.services.market_service import market_service
 
 
@@ -88,6 +91,39 @@ def get_stock_news(ticker: str):
 @router.get("/stocks/{ticker}/news/summary", response_model=NewsSummaryResponse)
 def get_stock_news_summary(ticker: str):
     return market_service.get_stock_news_summary(ticker)
+
+
+@router.post("/stocks/{ticker}/news/summary/refresh", response_model=AsyncJobResponse)
+def refresh_stock_news_summary(request: Request, ticker: str):
+    try:
+        return async_job_service.create_news_summary_job(
+            ticker=ticker,
+            requested_by=request.state.principal_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/jobs/historical-backfill", response_model=AsyncJobResponse)
+def create_historical_backfill_job(
+    request: Request,
+    payload: AsyncJobRequest | None = None,
+):
+    try:
+        return async_job_service.create_historical_backfill_job(
+            requested_by=request.state.principal_id,
+            ticker=payload.ticker if payload else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/jobs/{job_id}", response_model=AsyncJobResponse)
+def get_async_job(request: Request, job_id: int):
+    try:
+        return async_job_service.get_job(job_id, request.state.principal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/analytics/intraday/movers", response_model=IntradayMoversResponse)
