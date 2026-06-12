@@ -80,6 +80,23 @@ CREATE TABLE IF NOT EXISTS public.dashboard_watchlists (
 CREATE INDEX IF NOT EXISTS idx_dashboard_watchlists_principal
 ON public.dashboard_watchlists (principal_id, ticker);
 
+CREATE TABLE IF NOT EXISTS public.async_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    job_type VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result JSONB,
+    error_message TEXT,
+    requested_by VARCHAR(128) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_async_jobs_status_created_at
+ON public.async_jobs (status, created_at);
+
 CREATE TABLE IF NOT EXISTS public.symbol_reference (
     canonical_ticker VARCHAR(10) PRIMARY KEY,
     company_name VARCHAR(255) NOT NULL,
