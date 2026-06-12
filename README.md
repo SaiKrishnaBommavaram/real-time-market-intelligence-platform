@@ -53,6 +53,7 @@ Install these locally:
 - Python `3.11`
 - Node.js `20+`
 - `dbt-postgres` CLI
+- Redis `7+` if you run the API outside Docker Compose
 
 Optional but recommended:
 
@@ -71,11 +72,13 @@ Important variables:
 
 - `MARKET_ENV`, `MARKET_DEBUG`, `LOG_LEVEL`: environment selection and runtime verbosity. Use `local`, `dev`, or `prod`.
 - `MARKET_DB_*`: PostgreSQL connection
+- `MARKET_REDIS_*`: shared Redis rate-limit backend
 - `MARKET_KAFKA_*`: Kafka connection and topic
 - `MARKET_S3_*`: MinIO/S3 connection and bucket
 - `MARKET_PRODUCER_POLL_SECONDS`, `MARKET_PRODUCER_MAX_RETRIES`, `MARKET_PRODUCER_BACKOFF_SECONDS`: producer polling and retry behavior
 - `MARKET_TICKERS`: tracked symbols; the producer auto-adds benchmark ETFs from the canonical symbol catalog
 - `MARKET_ENABLE_HISTORY_BACKFILL`, `MARKET_HISTORY_PERIOD`, `MARKET_HISTORY_INTERVAL`, `MARKET_HISTORY_LOOKBACK_DAYS`: producer-driven historical backfill and intraday bar settings
+- `MARKET_JOB_WORKER_POLL_SECONDS`, `MARKET_JOB_WORKER_BATCH_SIZE`, `MARKET_ENABLE_ASYNC_NEWS_SUMMARY`, `MARKET_ENABLE_ASYNC_BACKFILL`: async job queue behavior
 - `MARKET_CONSUMER_MAX_RETRIES`, `MARKET_CONSUMER_BACKOFF_SECONDS`: consumer retry and commit behavior
 - `MARKET_DQ_MAX_EVENT_AGE_MINUTES`, `MARKET_DQ_MAX_SUMMARY_AGE_HOURS`: Airflow freshness thresholds
 - `NEWS_API_KEY`: required for `/stocks/{ticker}/news` and `/stocks/{ticker}/news/summary`
@@ -127,6 +130,7 @@ psql "postgresql://postgres:postgres@localhost:55432/market_data" -f postgres/in
 Default host ports:
 
 - PostgreSQL: `55432`
+- Redis: `56379`
 - ZooKeeper: `52181`
 - Kafka: `59092`
 - MinIO API: `59000`
@@ -263,6 +267,12 @@ The dbt project now includes:
 - anomaly history records in `analytics.stock_anomaly_history`
 - reusable ranking features in `analytics.stock_signal_feature_store`
 
+API-owned PostgreSQL tables can now also be managed through Alembic:
+
+```bash
+alembic upgrade head
+```
+
 ### 9. Start the API
 
 ```bash
@@ -272,9 +282,9 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 API docs and health checks:
 
-- `http://localhost:8000/`
-- `http://localhost:8000/health`
-- `http://localhost:8000/ready`
+- `http://localhost:8000/v1/`
+- `http://localhost:8000/v1/health`
+- `http://localhost:8000/v1/ready`
 - `http://localhost:8000/docs`
 
 Additional analytics routes:
@@ -290,6 +300,9 @@ Additional analytics routes:
 - `/analytics/sectors`
 - `/analytics/anomalies`
 - `/analytics/features/{ticker}`
+- `POST /stocks/{ticker}/news/summary/refresh`
+- `POST /jobs/historical-backfill`
+- `GET /jobs/{job_id}`
 
 Watchlist and observability routes:
 
@@ -306,6 +319,10 @@ The observability endpoint reports API request counts/latency, auth and rate-lim
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
 Freshness is now market-calendar-aware. Outside active US trading sessions, cache responses can remain fresh through the expected closed window instead of being marked stale simply because a TTL expired overnight or on a holiday.
+
+API rate limiting is now Redis-backed, so limits are enforced consistently across multiple API instances instead of per-process memory buckets.
+
+Slow workflows can now be queued instead of blocking request paths. News-summary refreshes and historical backfills are available as async jobs, with a dedicated worker process polling `public.async_jobs`.
 
 The API now separates liveness from readiness:
 
@@ -333,12 +350,13 @@ If you want the shortest path to a working demo, use this order:
 3. create the MinIO bucket
 4. initialize Airflow
 5. install Python and Node dependencies
-6. create `~/.dbt/profiles.yml`
-7. run the producer
-8. run both consumers
-9. run `dbt run`
-10. start FastAPI
-11. start the React dashboard
+6. run `alembic upgrade head`
+7. create `~/.dbt/profiles.yml`
+8. run the producer
+9. run both consumers
+10. run `dbt run`
+11. start FastAPI
+12. start the React dashboard
 
 If `/market/summary` is empty, the usual cause is that dbt has not run yet or the dbt profile schema is not `analytics`.
 
@@ -354,11 +372,23 @@ Reports API liveness without dependency checks.
 
 ### `GET /ready`
 
-Reports startup readiness, including PostgreSQL connectivity and required cache-table availability.
+Reports startup readiness, including PostgreSQL connectivity, required API tables, and Redis availability.
 
 ### `GET /market/summary`
 
 Reads up to 100 rows from `analytics.daily_stock_summary`, including canonical company metadata and benchmark-relative move context.
+
+### `POST /stocks/{ticker}/news/summary/refresh`
+
+Queues a background job to refresh the cached news summary for a ticker and returns an async job record.
+
+### `POST /jobs/historical-backfill`
+
+Queues a background job that republishes historical bars for one ticker or the configured tracked set.
+
+### `GET /jobs/{job_id}`
+
+Returns the latest status, payload, result, and error details for an async job.
 
 ### `GET /stocks/{ticker}/summary`
 
@@ -402,6 +432,8 @@ Operational tables:
 - `public.stock_prices`: raw streamed stock events
 - `public.stock_search_cache`: cached live-price and news responses created by the API
 - `public.symbol_reference`: canonical ticker, company, sector, alias, and benchmark metadata
+- `public.dashboard_watchlists`: persisted watchlist thresholds per principal
+- `public.async_jobs`: queued async work for news-summary refreshes and historical backfills
 
 Analytics schema:
 
@@ -449,6 +481,8 @@ This repo includes `render.yaml` for the FastAPI service.
 Required backend environment variables:
 
 - `MARKET_ENV=prod`
+- `MARKET_REDIS_HOST`
+- `MARKET_REDIS_PORT`
 - `ALLOWED_ORIGINS`
 - `ALLOWED_ORIGIN_REGEX` if you need dynamic preview domains
 - `ALLOWED_METHODS`
@@ -479,6 +513,12 @@ uvicorn api.main:app --host 0.0.0.0 --port $PORT
 ```
 
 Health checks should target `/ready` so traffic is only sent once the database and cache table are ready.
+
+Run a separate worker process for async jobs:
+
+```bash
+python -m api.job_worker
+```
 
 ## AWS Deployment Baseline
 
