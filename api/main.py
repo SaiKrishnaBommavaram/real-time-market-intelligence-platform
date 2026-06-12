@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.config import settings
 from api.logging import configure_logging, log_request_middleware
 from api.routes.market import router as market_router
+from api.routes.v1 import router as v1_router
 from api.security import enforce_api_key_middleware, rate_limit_middleware
 from api.startup import run_startup_checks
 
@@ -39,4 +40,5 @@ app.middleware("http")(log_request_middleware)
 app.middleware("http")(rate_limit_middleware)
 app.middleware("http")(enforce_api_key_middleware)
 
-app.include_router(market_router)
+app.include_router(v1_router)
+app.include_router(market_router, include_in_schema=False)
