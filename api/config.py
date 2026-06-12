@@ -120,6 +120,23 @@ class CacheSettings:
     allow_stale_fallback: bool
 
 
+@dataclass(frozen=True)
+class RedisSettings:
+    host: str
+    port: int
+    db: int
+    password: str | None
+    key_prefix: str
+
+
+@dataclass(frozen=True)
+class JobsSettings:
+    worker_poll_seconds: int
+    worker_batch_size: int
+    enable_async_news_summary: bool
+    enable_async_backfill: bool
+
+
 class StartupCheckMode(StrEnum):
     OFF = "off"
     WARN = "warn"
@@ -144,6 +161,8 @@ class Settings:
     security: SecuritySettings
     news: NewsSettings
     cache: CacheSettings
+    redis: RedisSettings
+    jobs: JobsSettings
     deployment: DeploymentSettings
 
     @property
@@ -259,6 +278,42 @@ class Settings:
         return self.cache.allow_stale_fallback
 
     @property
+    def redis_host(self) -> str:
+        return self.redis.host
+
+    @property
+    def redis_port(self) -> int:
+        return self.redis.port
+
+    @property
+    def redis_db(self) -> int:
+        return self.redis.db
+
+    @property
+    def redis_password(self) -> str | None:
+        return self.redis.password
+
+    @property
+    def redis_key_prefix(self) -> str:
+        return self.redis.key_prefix
+
+    @property
+    def job_worker_poll_seconds(self) -> int:
+        return self.jobs.worker_poll_seconds
+
+    @property
+    def job_worker_batch_size(self) -> int:
+        return self.jobs.worker_batch_size
+
+    @property
+    def enable_async_news_summary(self) -> bool:
+        return self.jobs.enable_async_news_summary
+
+    @property
+    def enable_async_backfill(self) -> bool:
+        return self.jobs.enable_async_backfill
+
+    @property
     def startup_check_mode(self) -> StartupCheckMode:
         return self.deployment.startup_check_mode
 
@@ -327,6 +382,19 @@ def build_settings() -> Settings:
         news_summary_ttl_minutes=_get_int("MARKET_NEWS_SUMMARY_CACHE_TTL_MINUTES", "180"),
         allow_stale_fallback=_get_bool("MARKET_ALLOW_STALE_CACHE_FALLBACK", "true"),
     )
+    redis = RedisSettings(
+        host=_get_env("MARKET_REDIS_HOST", "localhost") or "localhost",
+        port=_get_int("MARKET_REDIS_PORT", "56379"),
+        db=_get_int("MARKET_REDIS_DB", "0"),
+        password=_get_secret("MARKET_REDIS_PASSWORD"),
+        key_prefix=_get_env("MARKET_REDIS_KEY_PREFIX", "market-intel") or "market-intel",
+    )
+    jobs = JobsSettings(
+        worker_poll_seconds=_get_int("MARKET_JOB_WORKER_POLL_SECONDS", "5"),
+        worker_batch_size=_get_int("MARKET_JOB_WORKER_BATCH_SIZE", "5"),
+        enable_async_news_summary=_get_bool("MARKET_ENABLE_ASYNC_NEWS_SUMMARY", "true"),
+        enable_async_backfill=_get_bool("MARKET_ENABLE_ASYNC_BACKFILL", "true"),
+    )
     deployment = DeploymentSettings(
         startup_check_mode=_get_startup_check_mode(environment),
     )
@@ -337,6 +405,10 @@ def build_settings() -> Settings:
         ("MARKET_LIVE_CACHE_TTL_MINUTES", cache.live_ttl_minutes),
         ("MARKET_NEWS_CACHE_TTL_MINUTES", cache.news_ttl_minutes),
         ("MARKET_NEWS_SUMMARY_CACHE_TTL_MINUTES", cache.news_summary_ttl_minutes),
+        ("MARKET_REDIS_PORT", redis.port),
+        ("MARKET_REDIS_DB", redis.db),
+        ("MARKET_JOB_WORKER_POLL_SECONDS", jobs.worker_poll_seconds),
+        ("MARKET_JOB_WORKER_BATCH_SIZE", jobs.worker_batch_size),
         ("LOCAL_SUMMARIZER_MAX_LENGTH", news.local_summarizer_max_length),
         ("LOCAL_SUMMARIZER_MIN_LENGTH", news.local_summarizer_min_length),
         ("LOCAL_SUMMARIZER_INPUT_MAX_TOKENS", news.local_summarizer_input_max_tokens),
@@ -374,6 +446,8 @@ def build_settings() -> Settings:
         security=security,
         news=news,
         cache=cache,
+        redis=redis,
+        jobs=jobs,
         deployment=deployment,
     )
 
