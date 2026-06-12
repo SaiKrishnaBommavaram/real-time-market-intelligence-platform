@@ -1,18 +1,26 @@
 import hashlib
 import logging
-import time
-from collections import defaultdict, deque
-from threading import Lock
 
 from fastapi import Request
 from starlette.responses import JSONResponse
 
 from api.config import settings
 from api.observability import increment_metric
+from api.redis_client import get_redis_client
 
 
 logger = logging.getLogger("market.api.security")
-EXEMPT_PATHS = {"/", "/health", "/ready", "/docs", "/openapi.json", "/redoc"}
+EXEMPT_PATHS = {
+    "/",
+    "/health",
+    "/ready",
+    "/v1/",
+    "/v1/health",
+    "/v1/ready",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
 
 
 def is_exempt_path(path: str) -> bool:
@@ -33,42 +41,38 @@ def get_principal_id(request: Request) -> str:
     return f"anonymous:{get_client_identifier(request)}"
 
 
-class InMemoryRateLimiter:
+class RedisRateLimiter:
     def __init__(self, max_requests: int, window_seconds: int):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._buckets = defaultdict(deque)
-        self._lock = Lock()
+        self.redis = get_redis_client()
 
     def check(self, key: str) -> tuple[bool, dict[str, str]]:
-        now = time.time()
+        redis_key = (
+            f"{settings.redis_key_prefix}:rate-limit:"
+            f"{hashlib.sha256(key.encode('utf-8')).hexdigest()}"
+        )
+        current_count = self.redis.incr(redis_key)
+        if current_count == 1:
+            self.redis.expire(redis_key, self.window_seconds)
 
-        with self._lock:
-            bucket = self._buckets[key]
-            window_start = now - self.window_seconds
+        ttl_seconds = max(self.redis.ttl(redis_key), 0)
+        remaining = max(self.max_requests - current_count, 0)
+        headers = {
+            "X-RateLimit-Limit": str(self.max_requests),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Window": str(self.window_seconds),
+        }
 
-            while bucket and bucket[0] <= window_start:
-                bucket.popleft()
+        if current_count > self.max_requests:
+            headers["Retry-After"] = str(max(ttl_seconds, 1))
+            headers["X-RateLimit-Remaining"] = "0"
+            return False, headers
 
-            if len(bucket) >= self.max_requests:
-                retry_after = max(1, int(bucket[0] + self.window_seconds - now))
-                return False, {
-                    "Retry-After": str(retry_after),
-                    "X-RateLimit-Limit": str(self.max_requests),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Window": str(self.window_seconds),
-                }
-
-            bucket.append(now)
-            remaining = max(self.max_requests - len(bucket), 0)
-            return True, {
-                "X-RateLimit-Limit": str(self.max_requests),
-                "X-RateLimit-Remaining": str(remaining),
-                "X-RateLimit-Window": str(self.window_seconds),
-            }
+        return True, headers
 
 
-rate_limiter = InMemoryRateLimiter(
+rate_limiter = RedisRateLimiter(
     settings.rate_limit_max_requests,
     settings.rate_limit_window_seconds,
 )
@@ -101,7 +105,23 @@ async def rate_limit_middleware(request: Request, call_next):
     if is_exempt_path(request.url.path):
         return await call_next(request)
 
-    allowed, headers = rate_limiter.check(get_client_identifier(request))
+    try:
+        allowed, headers = rate_limiter.check(get_client_identifier(request))
+    except Exception as exc:
+        increment_metric("api.rate_limit.backend_error")
+        logger.exception(
+            "rate_limit_backend_failed",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "client_host": get_client_identifier(request),
+            },
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"detail": f"Rate limit backend unavailable: {exc}"},
+        )
+
     if not allowed:
         increment_metric("api.rate_limit.exceeded")
         logger.warning(
