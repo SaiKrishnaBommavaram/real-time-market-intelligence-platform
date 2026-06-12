@@ -41,27 +41,30 @@ class MarketService:
         return {
             "message": "Real-Time Market Intelligence API is running",
             "available_endpoints": [
-                "/health",
-                "/ready",
-                "/market/summary",
-                "/stocks/{ticker}/summary",
-                "/stocks/{ticker}/live",
-                "/stocks/{ticker}/news",
-                "/stocks/{ticker}/news/summary",
-                "/analytics/intraday/movers",
-                "/analytics/intraday/{ticker}",
-                "/analytics/movers",
-                "/analytics/volatility",
-                "/analytics/sentiment/{ticker}",
-                "/analytics/correlations/{ticker}",
-                "/analytics/drawdowns",
-                "/analytics/risk",
-                "/analytics/sectors",
-                "/analytics/anomalies",
-                "/analytics/features/{ticker}",
-                "/watchlist",
-                "/watchlist/alerts",
-                "/observability/metrics",
+                "/v1/health",
+                "/v1/ready",
+                "/v1/market/summary",
+                "/v1/stocks/{ticker}/summary",
+                "/v1/stocks/{ticker}/live",
+                "/v1/stocks/{ticker}/news",
+                "/v1/stocks/{ticker}/news/summary",
+                "/v1/stocks/{ticker}/news/summary/refresh",
+                "/v1/jobs/{job_id}",
+                "/v1/jobs/historical-backfill",
+                "/v1/analytics/intraday/movers",
+                "/v1/analytics/intraday/{ticker}",
+                "/v1/analytics/movers",
+                "/v1/analytics/volatility",
+                "/v1/analytics/sentiment/{ticker}",
+                "/v1/analytics/correlations/{ticker}",
+                "/v1/analytics/drawdowns",
+                "/v1/analytics/risk",
+                "/v1/analytics/sectors",
+                "/v1/analytics/anomalies",
+                "/v1/analytics/features/{ticker}",
+                "/v1/watchlist",
+                "/v1/watchlist/alerts",
+                "/v1/observability/metrics",
             ],
         }
 
@@ -337,6 +340,16 @@ class MarketService:
             summary["article_count"] = 0
             summary["cache"] = news_summary_cache
             return summary
+
+    def refresh_stock_news_summary(self, ticker: str):
+        normalized_ticker = normalize_ticker(ticker)
+        cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+        articles = cached_row["news_articles"] if cached_row and cached_row.get("news_articles") else fetch_news_articles(normalized_ticker)
+        summary = summarize_news_with_local_model(normalized_ticker, articles)
+        self.repository.upsert_news_cache(normalized_ticker, articles, summary)
+        summary["article_count"] = len(articles)
+        summary["cache"] = self._build_fresh_cache_metadata(settings.news_summary_cache_ttl_minutes)
+        return summary
 
     def get_intraday_candles(self, ticker: str, limit: int = 48):
         normalized_ticker = normalize_ticker(ticker)
