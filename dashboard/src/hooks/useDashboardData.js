@@ -6,12 +6,14 @@ import {
 } from "@tanstack/react-query";
 
 import {
+  fetchAnomalyHistory,
   deleteWatchlistItem,
   fetchIntradayCandles,
   fetchIntradayMovers,
   fetchHealth,
   fetchLiveStock,
   fetchMarketSummary,
+  fetchObservabilityMetrics,
   fetchStockNews,
   fetchStockNewsSummary,
   fetchStockSummary,
@@ -32,12 +34,20 @@ import {
 
 const DEFAULT_TICKER = "AAPL";
 const WATCHLIST_STORAGE_KEY = "market-dashboard-watchlist-v1";
+const EMPTY_ARRAY = [];
+const EMPTY_OBSERVABILITY_METRICS = {
+  counters: {},
+  gauges: {},
+  timings: {},
+};
 const dashboardQueryKeys = {
   health: ["health"],
   marketSummary: ["market-summary"],
   intradayMovers: ["intraday-movers"],
   watchlist: ["watchlist"],
   watchlistAlerts: ["watchlist-alerts"],
+  anomalyHistory: ["anomaly-history"],
+  observabilityMetrics: ["observability-metrics"],
   liveStock: (ticker) => ["live-stock", ticker],
   stockSummary: (ticker) => ["stock-summary", ticker],
   stockNews: (ticker) => ["stock-news", ticker],
@@ -73,11 +83,14 @@ function loadStoredWatchlist() {
   }
 }
 
-export function useDashboardData() {
+export function useDashboardData(route = "overview") {
   const [ticker, setTicker] = useState(DEFAULT_TICKER);
   const [activeTicker, setActiveTicker] = useState(DEFAULT_TICKER);
-  const [error, setError] = useState("");
+  const [validationError, setValidationError] = useState("");
   const queryClient = useQueryClient();
+  const isTickerRoute = route === "ticker";
+  const isWatchlistRoute = route === "watchlist";
+  const isObservabilityRoute = route === "observability";
 
   const baseQueries = useQueries({
     queries: [
@@ -96,12 +109,14 @@ export function useDashboardData() {
       {
         queryKey: dashboardQueryKeys.intradayMovers,
         queryFn: fetchIntradayMovers,
+        enabled: route === "overview",
         staleTime: 30_000,
         refetchInterval: 60_000,
       },
       {
         queryKey: dashboardQueryKeys.watchlist,
         queryFn: fetchWatchlist,
+        enabled: isWatchlistRoute,
         initialData: {
           data: loadStoredWatchlist(),
         },
@@ -110,11 +125,34 @@ export function useDashboardData() {
       {
         queryKey: dashboardQueryKeys.watchlistAlerts,
         queryFn: fetchWatchlistAlerts,
+        enabled: isWatchlistRoute,
         initialData: {
           data: [],
         },
         staleTime: 30_000,
         refetchInterval: 60_000,
+      },
+      {
+        queryKey: dashboardQueryKeys.anomalyHistory,
+        queryFn: () => fetchAnomalyHistory(120),
+        enabled: isWatchlistRoute,
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+        initialData: {
+          data: [],
+        },
+      },
+      {
+        queryKey: dashboardQueryKeys.observabilityMetrics,
+        queryFn: fetchObservabilityMetrics,
+        enabled: isObservabilityRoute,
+        staleTime: 15_000,
+        refetchInterval: 30_000,
+        initialData: {
+          counters: {},
+          gauges: {},
+          timings: {},
+        },
       },
     ],
   });
@@ -125,6 +163,8 @@ export function useDashboardData() {
     intradayMoversQuery,
     watchlistQuery,
     watchlistAlertsQuery,
+    anomalyHistoryQuery,
+    observabilityMetricsQuery,
   ] = baseQueries;
 
   const tickerQueries = useQueries({
@@ -132,32 +172,32 @@ export function useDashboardData() {
       {
         queryKey: dashboardQueryKeys.liveStock(activeTicker),
         queryFn: () => fetchLiveStock(activeTicker),
-        enabled: Boolean(activeTicker),
+        enabled: Boolean(activeTicker) && isTickerRoute,
         staleTime: 15_000,
         refetchInterval: 30_000,
       },
       {
         queryKey: dashboardQueryKeys.stockSummary(activeTicker),
         queryFn: () => fetchStockSummary(activeTicker),
-        enabled: Boolean(activeTicker),
+        enabled: Boolean(activeTicker) && isTickerRoute,
         staleTime: 30_000,
       },
       {
         queryKey: dashboardQueryKeys.stockNews(activeTicker),
         queryFn: () => fetchStockNews(activeTicker),
-        enabled: Boolean(activeTicker),
+        enabled: Boolean(activeTicker) && isTickerRoute,
         staleTime: 60_000,
       },
       {
         queryKey: dashboardQueryKeys.stockNewsSummary(activeTicker),
         queryFn: () => fetchStockNewsSummary(activeTicker),
-        enabled: Boolean(activeTicker),
+        enabled: Boolean(activeTicker) && isTickerRoute,
         staleTime: 60_000,
       },
       {
         queryKey: dashboardQueryKeys.intradayCandles(activeTicker),
         queryFn: () => fetchIntradayCandles(activeTicker),
-        enabled: Boolean(activeTicker),
+        enabled: Boolean(activeTicker) && isTickerRoute,
         staleTime: 30_000,
         refetchInterval: 60_000,
       },
@@ -173,11 +213,11 @@ export function useDashboardData() {
   ] = tickerQueries;
 
   const health = healthQuery.data ?? null;
-  const summary = marketSummaryQuery.data?.data ?? [];
-  const intradayMovers = intradayMoversQuery.data?.data ?? [];
+  const summary = marketSummaryQuery.data?.data ?? EMPTY_ARRAY;
+  const intradayMovers = intradayMoversQuery.data?.data ?? EMPTY_ARRAY;
   const liveStock = liveStockQuery.data ?? null;
-  const tickerSummary = stockSummaryQuery.data?.data ?? [];
-  const news = newsQuery.data?.articles ?? [];
+  const tickerSummary = stockSummaryQuery.data?.data ?? EMPTY_ARRAY;
+  const news = newsQuery.data?.articles ?? EMPTY_ARRAY;
   const newsSummary = newsSummaryQuery.data ?? null;
   const newsSummaryError = newsSummaryQuery.isError
     ? "News summary is unavailable for this ticker right now."
@@ -198,8 +238,11 @@ export function useDashboardData() {
         ),
       }));
   }, [watchlistQuery.data]);
-  const intradayCandles = intradayCandlesQuery.data?.data ?? [];
-  const watchlistAlerts = watchlistAlertsQuery.data?.data ?? [];
+  const intradayCandles = intradayCandlesQuery.data?.data ?? EMPTY_ARRAY;
+  const watchlistAlerts = watchlistAlertsQuery.data?.data ?? EMPTY_ARRAY;
+  const anomalyHistory = anomalyHistoryQuery.data?.data ?? EMPTY_ARRAY;
+  const observabilityMetrics =
+    observabilityMetricsQuery.data ?? EMPTY_OBSERVABILITY_METRICS;
   const loading =
     marketSummaryQuery.isLoading ||
     healthQuery.isLoading ||
@@ -240,41 +283,28 @@ export function useDashboardData() {
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
   }, [watchlist]);
 
-  useEffect(() => {
-    if (marketSummaryQuery.isError) {
-      setError(
-        marketSummaryQuery.error instanceof Error
-          ? marketSummaryQuery.error.message
-          : "Could not load dashboard data. Make sure FastAPI is running.",
-      );
-      return;
-    }
-
-    if (liveStockQuery.isError && activeTicker) {
-      setError(
-        liveStockQuery.error?.response?.data?.detail ||
-          `No live data found for ${activeTicker}`,
-      );
-      return;
-    }
-
-    setError("");
-  }, [
-    activeTicker,
-    liveStockQuery.error,
-    liveStockQuery.isError,
-    marketSummaryQuery.error,
-    marketSummaryQuery.isError,
-  ]);
+  const error =
+    validationError ||
+    (marketSummaryQuery.isError
+      ? marketSummaryQuery.error instanceof Error
+        ? marketSummaryQuery.error.message
+        : "Could not load dashboard data. Make sure FastAPI is running."
+      : "") ||
+    (liveStockQuery.isError && activeTicker
+      ? liveStockQuery.error?.response?.data?.detail ||
+        `No live data found for ${activeTicker}`
+      : "");
 
   async function loadDashboard() {
-    setError("");
+    setValidationError("");
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.health }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.marketSummary }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.intradayMovers }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlist }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.watchlistAlerts }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.anomalyHistory }),
+      queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.observabilityMetrics }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.liveStock(activeTicker) }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.stockSummary(activeTicker) }),
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.stockNews(activeTicker) }),
@@ -291,13 +321,13 @@ export function useDashboardData() {
     const cleanedTicker = nextTicker.trim().toUpperCase();
 
     if (!cleanedTicker) {
-      setError("Please enter a ticker symbol.");
+      setValidationError("Please enter a ticker symbol.");
       return;
     }
 
     setTicker(cleanedTicker);
     setActiveTicker(cleanedTicker);
-    setError("");
+    setValidationError("");
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.liveStock(cleanedTicker) }),
       queryClient.invalidateQueries({
@@ -410,16 +440,100 @@ export function useDashboardData() {
     });
   }
 
-  const watchlistEntries = useMemo(
-    () => buildWatchlistEntries(summary, watchlist),
-    [summary, watchlist],
-  );
-  const triggeredAlerts = useMemo(
-    () => watchlistEntries.filter((entry) => entry.hasAlert),
-    [watchlistEntries],
-  );
-
   const latestTickerSummary = tickerSummary[0] || null;
+
+  function buildPanelState({ queries, refreshKeys, empty = false }) {
+    const relevantQueries = queries.filter(Boolean);
+    const firstError = relevantQueries.find((query) => query.isError)?.error;
+    const updatedAt = Math.max(
+      ...relevantQueries.map((query) => Number(query.dataUpdatedAt || 0)),
+      0,
+    );
+
+    return {
+      isLoading: relevantQueries.some((query) => query.isLoading),
+      isFetching: relevantQueries.some((query) => query.isFetching),
+      isError: Boolean(firstError),
+      error:
+        firstError?.response?.data?.detail ||
+        firstError?.message ||
+        "",
+      isStale: relevantQueries.some((query) => query.isStale),
+      isEmpty: empty,
+      updatedAt: updatedAt || null,
+      async refresh() {
+        await Promise.all(
+          refreshKeys.map((queryKey) =>
+            queryClient.invalidateQueries({ queryKey }),
+          ),
+        );
+      },
+    };
+  }
+
+  const panelStates = {
+    shell: buildPanelState({
+      queries: [healthQuery, marketSummaryQuery],
+      refreshKeys: [
+        dashboardQueryKeys.health,
+        dashboardQueryKeys.marketSummary,
+      ],
+      empty: !summary.length,
+    }),
+    overview: buildPanelState({
+      queries: [marketSummaryQuery],
+      refreshKeys: [dashboardQueryKeys.marketSummary],
+      empty: !summary.length,
+    }),
+    signals: buildPanelState({
+      queries: [marketSummaryQuery, intradayMoversQuery],
+      refreshKeys: [
+        dashboardQueryKeys.marketSummary,
+        dashboardQueryKeys.intradayMovers,
+      ],
+      empty: !topMovers.length && !anomalyFeed.length,
+    }),
+    ticker: buildPanelState({
+      queries: [liveStockQuery, stockSummaryQuery, intradayCandlesQuery],
+      refreshKeys: [
+        dashboardQueryKeys.liveStock(activeTicker),
+        dashboardQueryKeys.stockSummary(activeTicker),
+        dashboardQueryKeys.intradayCandles(activeTicker),
+      ],
+      empty: !liveStock && !tickerSummary.length,
+    }),
+    news: buildPanelState({
+      queries: [newsQuery, newsSummaryQuery],
+      refreshKeys: [
+        dashboardQueryKeys.stockNews(activeTicker),
+        dashboardQueryKeys.stockNewsSummary(activeTicker),
+      ],
+      empty: !news.length && !newsSummary,
+    }),
+    watchlist: buildPanelState({
+      queries: [watchlistQuery, watchlistAlertsQuery],
+      refreshKeys: [
+        dashboardQueryKeys.watchlist,
+        dashboardQueryKeys.watchlistAlerts,
+      ],
+      empty: !watchlistEntries.length,
+    }),
+    anomalies: buildPanelState({
+      queries: [anomalyHistoryQuery],
+      refreshKeys: [dashboardQueryKeys.anomalyHistory],
+      empty: !anomalyHistory.length,
+    }),
+    observability: buildPanelState({
+      queries: [healthQuery, observabilityMetricsQuery],
+      refreshKeys: [
+        dashboardQueryKeys.health,
+        dashboardQueryKeys.observabilityMetrics,
+      ],
+      empty:
+        !Object.keys(observabilityMetrics.counters || {}).length &&
+        !Object.keys(observabilityMetrics.timings || {}).length,
+    }),
+  };
 
   return {
     activeTicker,
@@ -440,6 +554,9 @@ export function useDashboardData() {
     newsSummary,
     newsSummaryError,
     newsSummaryLoading,
+    observabilityMetrics,
+    anomalyHistory,
+    panelStates,
     quickTickers,
     removeTickerFromWatchlist,
     searchLoading,
