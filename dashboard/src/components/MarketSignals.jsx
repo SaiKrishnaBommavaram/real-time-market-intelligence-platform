@@ -7,11 +7,13 @@ import {
   getAnomalyLabel,
   getPriceChangeClass,
 } from "../utils/dashboard";
+import { PanelStatus } from "./PanelStatus";
 
 export function MarketSignals({
   activeTicker,
   anomalyFeed,
   onTickerSelect,
+  panelState,
   topMovers,
 }) {
   return (
@@ -24,6 +26,7 @@ export function MarketSignals({
               Largest daily percentage swings from the latest warehouse snapshot.
             </p>
           </div>
+          <PanelStatus state={panelState} compact />
         </div>
 
         <div className="leaders-list">
@@ -60,6 +63,7 @@ export function MarketSignals({
               Price and volume outliers surfaced from the latest daily aggregates.
             </p>
           </div>
+          <PanelStatus state={panelState} compact />
         </div>
 
         <div className="leaders-list">
