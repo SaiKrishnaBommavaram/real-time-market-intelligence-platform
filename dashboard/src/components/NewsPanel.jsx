@@ -2,10 +2,12 @@ import {
   getSentimentClass,
   getSentimentLabel,
 } from "../utils/dashboard";
+import { PanelStatus } from "./PanelStatus";
 
 export function NewsPanel({
   activeTicker,
   news,
+  panelState,
   newsSummary,
   newsSummaryError,
   newsSummaryLoading,
@@ -20,6 +22,7 @@ export function NewsPanel({
           </p>
         </div>
       </div>
+      <PanelStatus state={panelState} compact />
 
       {newsSummaryLoading && (
         <div className="summary-card">
