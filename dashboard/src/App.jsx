@@ -1,17 +1,20 @@
 import "./App.css";
 
-import { MarketOverview } from "./components/MarketOverview";
-import { MarketSignals } from "./components/MarketSignals";
-import { NewsPanel } from "./components/NewsPanel";
-import { TickerWorkspace } from "./components/TickerWorkspace";
-import { WatchlistPanel } from "./components/WatchlistPanel";
+import { DashboardShell } from "./components/DashboardShell";
+import { ObservabilityRoute } from "./components/routes/ObservabilityRoute";
+import { OverviewRoute } from "./components/routes/OverviewRoute";
+import { TickerRoute } from "./components/routes/TickerRoute";
+import { WatchlistRoute } from "./components/routes/WatchlistRoute";
 import { useDashboardData } from "./hooks/useDashboardData";
+import { useDashboardRoute } from "./hooks/useDashboardRoute";
 
 function App() {
+  const { navigate, route } = useDashboardRoute();
   const {
     activeTicker,
     addTickerToWatchlist,
     anomalyFeed,
+    anomalyHistory,
     error,
     health,
     latestTickerSummary,
@@ -23,6 +26,8 @@ function App() {
     newsSummary,
     newsSummaryError,
     newsSummaryLoading,
+    observabilityMetrics,
+    panelStates,
     quickTickers,
     searchLoading,
     summary,
@@ -38,82 +43,86 @@ function App() {
     removeTickerFromWatchlist,
     searchTicker,
     setTicker,
-  } = useDashboardData();
+  } = useDashboardData(route);
+
+  async function handleTickerSelect(nextTicker) {
+    await searchTicker(nextTicker);
+    if (route !== "ticker") {
+      navigate("ticker");
+    }
+  }
+
+  let content;
+
+  if (route === "ticker") {
+    content = (
+      <TickerRoute
+        activeTicker={activeTicker}
+        latestTickerSummary={latestTickerSummary}
+        liveStock={liveStock}
+        news={news}
+        newsSummary={newsSummary}
+        newsSummaryError={newsSummaryError}
+        newsSummaryLoading={newsSummaryLoading}
+        onSearch={handleTickerSelect}
+        panelStates={panelStates}
+        quickTickers={quickTickers}
+        searchLoading={searchLoading}
+        setTicker={setTicker}
+        ticker={ticker}
+        tickerSummary={tickerSummary}
+        tickerTrend={tickerTrend}
+      />
+    );
+  } else if (route === "watchlist") {
+    content = (
+      <WatchlistRoute
+        activeTicker={activeTicker}
+        addTickerToWatchlist={addTickerToWatchlist}
+        anomalyHistory={anomalyHistory}
+        panelStates={panelStates}
+        removeTickerFromWatchlist={removeTickerFromWatchlist}
+        searchTicker={handleTickerSelect}
+        triggeredAlerts={triggeredAlerts}
+        updateWatchlistThreshold={updateWatchlistThreshold}
+        watchlistEntries={watchlistEntries}
+      />
+    );
+  } else if (route === "observability") {
+    content = (
+      <ObservabilityRoute
+        observabilityMetrics={observabilityMetrics}
+        panelStates={panelStates}
+      />
+    );
+  } else {
+    content = (
+      <OverviewRoute
+        activeTicker={activeTicker}
+        anomalyFeed={anomalyFeed}
+        marketLeaders={marketLeaders}
+        marketMetrics={marketMetrics}
+        marketTrend={marketTrend}
+        onTickerSelect={handleTickerSelect}
+        panelStates={panelStates}
+        summary={summary}
+        topMovers={topMovers}
+      />
+    );
+  }
 
   return (
-    <main className="page">
-      <section className="topbar">
-        <div>
-          <p className="eyebrow">Real-Time Market Intelligence</p>
-          <h1>Operations Dashboard</h1>
-        </div>
-
-        <div className="topbar-actions">
-          <div className={`status-pill ${health ? "healthy" : "unhealthy"}`}>
-            <span className="status-dot" />
-            {health ? "API online" : "API unavailable"}
-          </div>
-          <button className="secondary-button" onClick={loadDashboard} disabled={loading}>
-            {loading ? "Refreshing..." : "Refresh data"}
-          </button>
-        </div>
-      </section>
-
-      {error && <div className="error">{error}</div>}
-
-      {loading ? (
-        <div className="loading">Loading dashboard data...</div>
-      ) : (
-        <>
-          <MarketOverview
-            activeTicker={activeTicker}
-            marketLeaders={marketLeaders}
-            marketMetrics={marketMetrics}
-            marketTrend={marketTrend}
-            onTickerSelect={searchTicker}
-            summary={summary}
-          />
-
-          <MarketSignals
-            activeTicker={activeTicker}
-            anomalyFeed={anomalyFeed}
-            onTickerSelect={searchTicker}
-            topMovers={topMovers}
-          />
-
-          <TickerWorkspace
-            activeTicker={activeTicker}
-            latestTickerSummary={latestTickerSummary}
-            liveStock={liveStock}
-            onSearch={searchTicker}
-            quickTickers={quickTickers}
-            searchLoading={searchLoading}
-            setTicker={setTicker}
-            ticker={ticker}
-            tickerSummary={tickerSummary}
-            tickerTrend={tickerTrend}
-          />
-
-          <WatchlistPanel
-            activeTicker={activeTicker}
-            onAddActiveTicker={() => addTickerToWatchlist(activeTicker)}
-            onRemoveTicker={removeTickerFromWatchlist}
-            onSelectTicker={searchTicker}
-            onUpdateThreshold={updateWatchlistThreshold}
-            triggeredAlerts={triggeredAlerts}
-            watchlistEntries={watchlistEntries}
-          />
-
-          <NewsPanel
-            activeTicker={activeTicker}
-            news={news}
-            newsSummary={newsSummary}
-            newsSummaryError={newsSummaryError}
-            newsSummaryLoading={newsSummaryLoading}
-          />
-        </>
-      )}
-    </main>
+    <DashboardShell
+      health={health}
+      loading={loading}
+      onNavigate={navigate}
+      onRefresh={loadDashboard}
+      route={route}
+      shellState={panelStates.shell}
+    >
+      {error ? <div className="error">{error}</div> : null}
+      {content}
+    </DashboardShell>
   );
 }
 
