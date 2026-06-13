@@ -10,6 +10,7 @@ import {
 
 import { ChartTooltip } from "./ChartTooltip";
 import { MetricCard } from "./MetricCard";
+import { PanelStatus } from "./PanelStatus";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -23,6 +24,7 @@ export function MarketOverview({
   marketMetrics,
   marketTrend,
   onTickerSelect,
+  panelState,
   summary,
 }) {
   return (
@@ -60,6 +62,7 @@ export function MarketOverview({
               </p>
             </div>
           </div>
+          <PanelStatus state={panelState} compact />
 
           <div className="chart-wrap">
             {marketTrend.length ? (
@@ -118,6 +121,7 @@ export function MarketOverview({
               </p>
             </div>
           </div>
+          <PanelStatus state={panelState} compact />
 
           <div className="leaders-list">
             {marketLeaders.length ? (
