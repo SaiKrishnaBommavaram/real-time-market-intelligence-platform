@@ -6,6 +6,7 @@ import {
   getAnomalyLabel,
   getPriceChangeClass,
 } from "../utils/dashboard";
+import { PanelStatus } from "./PanelStatus";
 
 export function WatchlistPanel({
   activeTicker,
@@ -13,6 +14,7 @@ export function WatchlistPanel({
   onRemoveTicker,
   onSelectTicker,
   onUpdateThreshold,
+  panelState,
   triggeredAlerts,
   watchlistEntries,
 }) {
@@ -29,6 +31,7 @@ export function WatchlistPanel({
           Add {activeTicker}
         </button>
       </div>
+      <PanelStatus state={panelState} compact />
 
       <div className="watchlist-alert-banner">
         <strong>{triggeredAlerts.length}</strong>
