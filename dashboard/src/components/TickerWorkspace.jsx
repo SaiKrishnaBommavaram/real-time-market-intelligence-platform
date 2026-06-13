@@ -10,6 +10,7 @@ import {
 
 import { ChartTooltip } from "./ChartTooltip";
 import { MetricCard } from "./MetricCard";
+import { PanelStatus } from "./PanelStatus";
 import {
   formatCompactNumber,
   formatCurrency,
@@ -23,6 +24,7 @@ export function TickerWorkspace({
   latestTickerSummary,
   liveStock,
   onSearch,
+  panelState,
   quickTickers,
   searchLoading,
   setTicker,
@@ -49,6 +51,9 @@ export function TickerWorkspace({
               </button>
             ))}
           </div>
+        </div>
+        <div className="search-status">
+          <PanelStatus state={panelState} compact />
         </div>
 
         <div className="search-box">
@@ -78,6 +83,7 @@ export function TickerWorkspace({
               </p>
             </div>
           </div>
+          <PanelStatus state={panelState} compact />
 
           <div className="metric-grid compact">
             <MetricCard
@@ -166,6 +172,7 @@ export function TickerWorkspace({
               </p>
             </div>
           </div>
+          <PanelStatus state={panelState} compact />
 
           <div className="history-table">
             <div className="table-head">
