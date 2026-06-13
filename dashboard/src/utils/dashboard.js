@@ -178,12 +178,42 @@ export function shortDate(value) {
 }
 
 export function formatTimestamp(value) {
+  if (!value) {
+    return "Never";
+  }
+
   return new Date(value).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+export function formatRelativeTime(value) {
+  if (!value) {
+    return "Never updated";
+  }
+
+  const timestamp = typeof value === "number" ? value : new Date(value).getTime();
+  const diffMs = Date.now() - timestamp;
+
+  if (diffMs < 15_000) {
+    return "Updated just now";
+  }
+
+  const diffMinutes = Math.round(diffMs / 60_000);
+  if (diffMinutes < 60) {
+    return `Updated ${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `Updated ${diffHours}h ago`;
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  return `Updated ${diffDays}d ago`;
 }
 
 export function formatTooltipValue(key, value) {
