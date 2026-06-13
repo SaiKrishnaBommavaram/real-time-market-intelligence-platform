@@ -89,3 +89,15 @@ export async function fetchWatchlistAlerts() {
   const response = await apiClient.get(`${getApiRoot()}/watchlist/alerts`);
   return response.data;
 }
+
+export async function fetchAnomalyHistory(limit = 120) {
+  const response = await apiClient.get(`${getApiRoot()}/analytics/anomalies`, {
+    params: { limit },
+  });
+  return response.data;
+}
+
+export async function fetchObservabilityMetrics() {
+  const response = await apiClient.get(`${getApiRoot()}/observability/metrics`);
+  return response.data;
+}
