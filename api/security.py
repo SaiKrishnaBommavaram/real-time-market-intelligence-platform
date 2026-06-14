@@ -13,9 +13,11 @@ logger = logging.getLogger("market.api.security")
 EXEMPT_PATHS = {
     "/",
     "/health",
+    "/metrics",
     "/ready",
     "/v1/",
     "/v1/health",
+    "/v1/metrics",
     "/v1/ready",
     "/docs",
     "/openapi.json",
