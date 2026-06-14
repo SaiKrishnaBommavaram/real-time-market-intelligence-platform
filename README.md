@@ -2,7 +2,7 @@
 
 An end-to-end market data platform that:
 
-- pulls live stock prices with `yfinance`
+- pulls live stock prices with `yfinance` and alpha vantage.
 - streams events through Kafka
 - lands raw events in S3-compatible object storage
 - writes operational events into PostgreSQL
