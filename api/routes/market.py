@@ -1,6 +1,8 @@
 import requests
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 
+from api.observability import PROMETHEUS_CONTENT_TYPE, render_prometheus_metrics
 from api.schemas import (
     AnomalyHistoryResponse,
     AsyncJobRequest,
@@ -56,6 +58,30 @@ def readiness_check():
         return market_service.get_readiness()
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.get(
+    "/metrics",
+    response_class=PlainTextResponse,
+    responses={
+        200: {
+            "content": {
+                PROMETHEUS_CONTENT_TYPE: {
+                    "schema": {"type": "string"},
+                },
+            },
+            "description": "Prometheus scrape output for API counters, gauges, and timings.",
+        },
+    },
+)
+def prometheus_metrics():
+    try:
+        return PlainTextResponse(
+            content=render_prometheus_metrics(),
+            media_type=PROMETHEUS_CONTENT_TYPE,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/market/summary", response_model=MarketSummaryResponse)
