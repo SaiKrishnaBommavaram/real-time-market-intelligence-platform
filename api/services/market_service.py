@@ -42,6 +42,7 @@ class MarketService:
             "message": "Real-Time Market Intelligence API is running",
             "available_endpoints": [
                 "/v1/health",
+                "/v1/metrics",
                 "/v1/ready",
                 "/v1/market/summary",
                 "/v1/stocks/{ticker}/summary",
