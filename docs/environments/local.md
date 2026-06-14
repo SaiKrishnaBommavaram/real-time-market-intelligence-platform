@@ -21,4 +21,5 @@ Local notes:
 
 - `/health` is liveness only.
 - `/ready` validates PostgreSQL connectivity and the cache table.
+- `/metrics` and `/v1/metrics` expose Prometheus-compatible scrape output for the API.
 - Keep `MARKET_DB_PASSWORD`, `MARKET_API_KEY`, and `NEWS_API_KEY` in `.env` only for local use.
