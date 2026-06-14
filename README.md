@@ -27,7 +27,7 @@ An end-to-end market data platform that:
    - local news summaries using a Hugging Face summarization model
    - analytics endpoints for movers, volatility, sentiment-over-time, ticker correlation, intraday rollups, and reusable signal features
    - persisted watchlists and watchlist alert history scoped to the active API principal
-   - an observability metrics snapshot for API cache/auth/request behavior
+   - an observability metrics snapshot plus Prometheus scrape export for API cache/auth/request behavior
    - route handlers from `api/routes/`
    - business logic from `api/services/`
    - persistence access from `api/repositories/`
@@ -285,6 +285,7 @@ API docs and health checks:
 - `http://localhost:8000/v1/`
 - `http://localhost:8000/v1/health`
 - `http://localhost:8000/v1/ready`
+- `http://localhost:8000/v1/metrics`
 - `http://localhost:8000/docs`
 
 Additional analytics routes:
@@ -311,10 +312,11 @@ Watchlist and observability routes:
 - `DELETE /watchlist/{ticker}`
 - `GET /watchlist/alerts`
 - `GET /observability/metrics`
+- `GET /metrics`
 
 The watchlist routes are scoped to the current request principal. When `MARKET_API_KEY` is enabled, the backend derives a stable profile key from the presented API key and persists watchlist thresholds in PostgreSQL instead of relying only on browser local storage.
 
-The observability endpoint reports API request counts/latency, auth and rate-limit events, cache hit vs stale fallback counters, and news-provider/summarizer counters. Producer and consumer processes now also emit periodic structured metric snapshots in their own logs.
+The observability JSON endpoint reports API request counts/latency, auth and rate-limit events, cache hit vs stale fallback counters, and news-provider/summarizer counters. `/metrics` and `/v1/metrics` expose the same in-process metrics as Prometheus-compatible scrape output for standard monitoring stacks.
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
@@ -330,6 +332,28 @@ The API now separates liveness from readiness:
 - `/ready`: PostgreSQL connectivity and cache-table readiness
 
 In shared and production environments, prefer mounted secret files or platform secret managers over committed `.env` files. `MARKET_DB_PASSWORD_FILE`, `MARKET_API_KEY_FILE`, and `NEWS_API_KEY_FILE` are supported for that path.
+
+## Tests And CI
+
+Backend checks now include:
+
+- Prometheus export tests for the observability registry and scrape endpoint
+- OpenAPI contract checks for routed response models
+- cross-layer contract checks that compare dbt mart columns, repository SQL selections, and Pydantic response fields
+
+Run them locally with:
+
+```bash
+pytest tests -q
+python scripts/check_api_schema.py
+```
+
+GitHub Actions now runs:
+
+- `pytest tests -q`
+- `python scripts/check_api_schema.py`
+- `dbt parse`
+- `dbt source freshness` and `dbt test` when `MARKET_CI_DBT_*` secrets are configured
 
 ### 10. Start the frontend
 
