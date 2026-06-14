@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  api-contracts:
+    runs-on: ubuntu-latest
+    env:
+      MARKET_ENV: local
+      MARKET_STARTUP_CHECK_MODE: off
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run API contract and observability tests
+        run: pytest tests -q
+
+      - name: Check OpenAPI schema and dashboard route alignment
+        run: python scripts/check_api_schema.py
+
+  dbt-quality:
+    runs-on: ubuntu-latest
+    env:
+      MARKET_ENV: local
+      CI_DBT_HOST: ${{ secrets.MARKET_CI_DBT_HOST }}
+      CI_DBT_PORT: ${{ secrets.MARKET_CI_DBT_PORT }}
+      CI_DBT_USER: ${{ secrets.MARKET_CI_DBT_USER }}
+      CI_DBT_PASSWORD: ${{ secrets.MARKET_CI_DBT_PASSWORD }}
+      CI_DBT_NAME: ${{ secrets.MARKET_CI_DBT_NAME }}
+      CI_DBT_SCHEMA: ${{ secrets.MARKET_CI_DBT_SCHEMA }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat <<EOF > ~/.dbt/profiles.yml
+          market_analytics:
+            target: ci
+            outputs:
+              ci:
+                type: postgres
+                host: ${CI_DBT_HOST:-localhost}
+                port: ${CI_DBT_PORT:-55432}
+                user: ${CI_DBT_USER:-postgres}
+                password: ${CI_DBT_PASSWORD:-postgres}
+                dbname: ${CI_DBT_NAME:-market_data}
+                schema: ${CI_DBT_SCHEMA:-analytics}
+                threads: 4
+          EOF
+
+      - name: Parse dbt project
+        working-directory: dbt/market_analytics
+        run: dbt parse
+
+      - name: Run dbt freshness and tests
+        working-directory: dbt/market_analytics
+        run: |
+          if [ -z "$CI_DBT_HOST" ] || [ -z "$CI_DBT_USER" ] || [ -z "$CI_DBT_PASSWORD" ] || [ -z "$CI_DBT_NAME" ]; then
+            echo "Skipping dbt source freshness and dbt test because CI warehouse credentials are not configured."
+            exit 0
+          fi
+          dbt source freshness
+          dbt test
