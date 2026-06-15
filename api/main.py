@@ -9,6 +9,7 @@ from api.routes.market import router as market_router
 from api.routes.v1 import router as v1_router
 from api.security import enforce_api_key_middleware, rate_limit_middleware
 from api.startup import run_startup_checks
+from api.database import close_db_pool
 
 
 configure_logging()
@@ -16,8 +17,9 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    run_startup_checks()
+    await run_startup_checks()
     yield
+    await close_db_pool()
 
 
 app = FastAPI(
