@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from api.config import settings
@@ -8,11 +9,15 @@ from api.services.async_job_service import async_job_service
 configure_logging()
 
 
-def main():
+async def run_worker():
     while True:
-        jobs = async_job_service.process_job_batch()
+        jobs = await async_job_service.process_job_batch()
         if not jobs:
-            time.sleep(settings.job_worker_poll_seconds)
+            await asyncio.sleep(settings.job_worker_poll_seconds)
+
+
+def main():
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":
