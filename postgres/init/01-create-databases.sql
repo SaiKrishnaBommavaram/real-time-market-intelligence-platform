@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS public.async_jobs (
     job_type VARCHAR(64) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    dedupe_key VARCHAR(64),
+    active_job_key VARCHAR(64),
     result JSONB,
     error_message TEXT,
     requested_by VARCHAR(128) NOT NULL,
@@ -94,8 +96,16 @@ CREATE TABLE IF NOT EXISTS public.async_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.async_jobs
+ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(64),
+ADD COLUMN IF NOT EXISTS active_job_key VARCHAR(64);
+
 CREATE INDEX IF NOT EXISTS idx_async_jobs_status_created_at
 ON public.async_jobs (status, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_async_jobs_active_job_key
+ON public.async_jobs (active_job_key)
+WHERE active_job_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.symbol_reference (
     canonical_ticker VARCHAR(10) PRIMARY KEY,
