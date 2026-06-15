@@ -4,6 +4,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+TickerPattern = r"^[A-Za-z][A-Za-z0-9.\-]{0,9}$"
+
+
 class CacheMetadata(BaseModel):
     state: Literal["fresh", "stale", "miss"]
     is_stale: bool
@@ -39,7 +42,7 @@ class ReadinessResponse(BaseModel):
 
 
 class AsyncJobRequest(BaseModel):
-    ticker: str | None = None
+    ticker: str | None = Field(default=None, pattern=TickerPattern)
 
 
 class AsyncJobResponse(BaseModel):
@@ -50,6 +53,7 @@ class AsyncJobResponse(BaseModel):
     result: dict | None = None
     error_message: str | None = None
     requested_by: str
+    deduplicated: bool = False
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -369,7 +373,7 @@ class WatchlistResponse(BaseModel):
 
 
 class WatchlistUpsertRequest(BaseModel):
-    ticker: str
+    ticker: str = Field(pattern=TickerPattern)
     price_alert_threshold: float = Field(gt=0)
     volume_alert_threshold: float = Field(gt=0)
 
@@ -400,6 +404,27 @@ class WatchlistAlertHistoryResponse(BaseModel):
 
 class DeleteResponse(BaseModel):
     deleted: bool
+
+
+class CacheAdminRequest(BaseModel):
+    ticker: str = Field(pattern=TickerPattern)
+    scopes: list[Literal["live", "news", "news_summary"]] = Field(
+        default_factory=lambda: ["live", "news", "news_summary"],
+        min_length=1,
+    )
+
+
+class CacheAdminScopeResult(BaseModel):
+    scope: Literal["live", "news", "news_summary"]
+    invalidated: bool = False
+    refreshed: bool = False
+    detail: str | None = None
+
+
+class CacheAdminResponse(BaseModel):
+    ticker: str
+    scopes: list[CacheAdminScopeResult]
+    invalidated: bool
 
 
 class MetricsTimingRow(BaseModel):
