@@ -1,8 +1,11 @@
+import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 from psycopg2.extras import Json
 
-from api.database import get_db_connection
+from api.database import get_db_connection, release_db_connection
 from api.config import settings
 from market_calendar import get_market_calendar_context, serialize_market_context
 
@@ -18,16 +21,92 @@ class MarketRepository:
     def _get_expiry_time(self, ttl_minutes: int):
         return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
 
-    def verify_stock_search_cache_table(self):
+    async def _fetchone(self, query: str, params=None):
+        connection = await get_db_connection()
+
+        def _run():
+            cur = connection.cursor()
+            try:
+                cur.execute(query, params) if params is not None else cur.execute(query)
+                return cur.fetchone()
+            finally:
+                cur.close()
+
+        try:
+            return await asyncio.to_thread(_run)
+        finally:
+            await release_db_connection(connection)
+
+    async def _fetchall(self, query: str, params=None):
+        connection = await get_db_connection()
+
+        def _run():
+            cur = connection.cursor()
+            try:
+                cur.execute(query, params) if params is not None else cur.execute(query)
+                return cur.fetchall()
+            finally:
+                cur.close()
+
+        try:
+            return await asyncio.to_thread(_run)
+        finally:
+            await release_db_connection(connection)
+
+    async def _execute(self, query: str, params=None):
+        connection = await get_db_connection()
+
+        def _run():
+            cur = connection.cursor()
+            try:
+                cur.execute(query, params) if params is not None else cur.execute(query)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cur.close()
+
+        try:
+            await asyncio.to_thread(_run)
+        finally:
+            await release_db_connection(connection)
+
+    async def _execute_returning_one(self, query: str, params=None):
+        connection = await get_db_connection()
+
+        def _run():
+            cur = connection.cursor()
+            try:
+                cur.execute(query, params) if params is not None else cur.execute(query)
+                row = cur.fetchone()
+                connection.commit()
+                return row
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cur.close()
+
+        try:
+            return await asyncio.to_thread(_run)
+        finally:
+            await release_db_connection(connection)
+
+    def build_job_dedupe_key(self, job_type: str, requested_by: str, payload: dict):
+        canonical_payload = json.dumps(payload or {}, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(
+            f"{job_type}:{requested_by}:{canonical_payload}".encode("utf-8"),
+        ).hexdigest()
+        return digest
+
+    async def verify_stock_search_cache_table(self):
         if self._search_cache_table_verified:
             return
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT to_regclass('public.stock_search_cache') AS table_name;")
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+        row = await self._fetchone(
+            "SELECT to_regclass('public.stock_search_cache') AS table_name;",
+        )
 
         if not row or not row.get("table_name"):
             raise RuntimeError(
@@ -37,16 +116,11 @@ class MarketRepository:
 
         self._search_cache_table_verified = True
 
-    def verify_async_jobs_table(self):
+    async def verify_async_jobs_table(self):
         if self._async_jobs_table_verified:
             return
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT to_regclass('public.async_jobs') AS table_name;")
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
+        row = await self._fetchone("SELECT to_regclass('public.async_jobs') AS table_name;")
 
         if not row or not row.get("table_name"):
             raise RuntimeError(
@@ -56,19 +130,13 @@ class MarketRepository:
 
         self._async_jobs_table_verified = True
 
-    def fetch_health_status(self):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT 1 AS status;")
-        result = cur.fetchone()
-        cur.close()
-        conn.close()
-        return result
+    async def fetch_health_status(self):
+        return await self._fetchone("SELECT 1 AS status;")
 
-    def fetch_readiness_status(self):
-        health_result = self.fetch_health_status()
-        self.verify_stock_search_cache_table()
-        self.verify_async_jobs_table()
+    async def fetch_readiness_status(self):
+        health_result = await self.fetch_health_status()
+        await self.verify_stock_search_cache_table()
+        await self.verify_async_jobs_table()
         redis_ready = False
         try:
             from api.redis_client import get_redis_client
@@ -83,38 +151,47 @@ class MarketRepository:
             "redis": redis_ready,
         }
 
-    def create_async_job(self, job_type: str, payload: dict, requested_by: str):
-        self.verify_async_jobs_table()
+    async def create_async_job(self, job_type: str, payload: dict, requested_by: str):
+        await self.verify_async_jobs_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        dedupe_key = self.build_job_dedupe_key(job_type, requested_by, payload)
+        row = await self._execute_returning_one(
             """
             INSERT INTO public.async_jobs (
                 job_type,
                 status,
                 payload,
+                dedupe_key,
+                active_job_key,
                 requested_by,
                 created_at,
                 updated_at
             )
-            VALUES (%s, 'pending', %s, %s, NOW(), NOW())
+            VALUES (%s, 'pending', %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (active_job_key)
+            DO NOTHING
             RETURNING *;
             """,
-            (job_type, Json(payload), requested_by),
+            (job_type, Json(payload), dedupe_key, dedupe_key, requested_by),
         )
-        row = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
+        if row:
+            row["deduplicated"] = False
+            return row
+
+        row = await self._fetchone(
+            """
+            SELECT *, TRUE AS deduplicated
+            FROM public.async_jobs
+            WHERE active_job_key = %s;
+            """,
+            (dedupe_key,),
+        )
         return row
 
-    def fetch_async_job(self, job_id: int):
-        self.verify_async_jobs_table()
+    async def fetch_async_job(self, job_id: int):
+        await self.verify_async_jobs_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        return await self._fetchone(
             """
             SELECT *
             FROM public.async_jobs
@@ -122,17 +199,11 @@ class MarketRepository:
             """,
             (job_id,),
         )
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        return row
 
-    def claim_pending_async_job(self):
-        self.verify_async_jobs_table()
+    async def claim_pending_async_job(self):
+        await self.verify_async_jobs_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        return await self._execute_returning_one(
             """
             WITH next_job AS (
                 SELECT id
@@ -152,22 +223,16 @@ class MarketRepository:
             RETURNING jobs.*;
             """
         )
-        row = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        return row
 
-    def complete_async_job(self, job_id: int, result: dict):
-        self.verify_async_jobs_table()
+    async def complete_async_job(self, job_id: int, result: dict):
+        await self.verify_async_jobs_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        await self._execute(
             """
             UPDATE public.async_jobs
             SET
                 status = 'succeeded',
+                active_job_key = NULL,
                 result = %s,
                 error_message = NULL,
                 completed_at = NOW(),
@@ -176,20 +241,16 @@ class MarketRepository:
             """,
             (Json(result), job_id),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
 
-    def fail_async_job(self, job_id: int, error_message: str):
-        self.verify_async_jobs_table()
+    async def fail_async_job(self, job_id: int, error_message: str):
+        await self.verify_async_jobs_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        await self._execute(
             """
             UPDATE public.async_jobs
             SET
                 status = 'failed',
+                active_job_key = NULL,
                 error_message = %s,
                 completed_at = NOW(),
                 updated_at = NOW()
@@ -197,14 +258,9 @@ class MarketRepository:
             """,
             (error_message[:2000], job_id),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
 
-    def fetch_market_summary(self):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_market_summary(self):
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -233,15 +289,9 @@ class MarketRepository:
             LIMIT 100;
             """
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_stock_summary(self, ticker: str):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_stock_summary(self, ticker: str):
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -271,15 +321,9 @@ class MarketRepository:
             """,
             (ticker,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_top_movers(self, limit: int = 10):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_top_movers(self, limit: int = 10):
+        return await self._fetchall(
             """
             WITH latest_trade_date AS (
                 SELECT MAX(trade_date) AS trade_date
@@ -308,15 +352,9 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_intraday_candles(self, ticker: str, limit: int = 48):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_intraday_candles(self, ticker: str, limit: int = 48):
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -344,15 +382,9 @@ class MarketRepository:
             """,
             (ticker, limit),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_intraday_movers(self, limit: int = 12):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_intraday_movers(self, limit: int = 12):
+        return await self._fetchall(
             """
             WITH ranked AS (
                 SELECT
@@ -412,15 +444,9 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_market_volatility(self, limit: int = 30):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_market_volatility(self, limit: int = 30):
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -436,15 +462,9 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_ticker_correlation(self, ticker: str, limit: int = 8):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_ticker_correlation(self, ticker: str, limit: int = 8):
+        return await self._fetchall(
             """
             WITH target_ticker AS (
                 SELECT
@@ -468,15 +488,9 @@ class MarketRepository:
             """,
             (ticker, ticker, limit),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_drawdown_recovery(self, limit: int = 30):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_drawdown_recovery(self, limit: int = 30):
+        return await self._fetchall(
             """
             WITH latest_per_ticker AS (
                 SELECT DISTINCT ON (ticker)
@@ -498,15 +512,9 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_risk_indicators(self, limit: int = 30):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_risk_indicators(self, limit: int = 30):
+        return await self._fetchall(
             """
             WITH latest_per_ticker AS (
                 SELECT DISTINCT ON (ticker)
@@ -529,15 +537,9 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_sector_performance(self, limit: int = 20):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_sector_performance(self, limit: int = 20):
+        return await self._fetchall(
             """
             WITH latest_trade_date AS (
                 SELECT MAX(trade_date) AS trade_date
@@ -561,17 +563,10 @@ class MarketRepository:
             """,
             (limit,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_anomaly_history(self, limit: int = 50, ticker: str | None = None):
-        conn = get_db_connection()
-        cur = conn.cursor()
-
+    async def fetch_anomaly_history(self, limit: int = 50, ticker: str | None = None):
         if ticker:
-            cur.execute(
+            return await self._fetchall(
                 """
                 SELECT
                 ticker,
@@ -594,39 +589,31 @@ class MarketRepository:
                 """,
                 (ticker, limit),
             )
-        else:
-            cur.execute(
-                """
-                SELECT
-                ticker,
-                company_name,
-                sector,
-                benchmark_ticker,
-                benchmark_name,
-                trade_date,
-                anomaly_flag,
-                anomaly_severity_score,
-                relative_price_change_pct,
-                price_change_pct,
-                volume_vs_avg_ratio,
-                close_price,
-                    total_volume
-                FROM analytics.stock_anomaly_history
-                ORDER BY trade_date DESC, anomaly_severity_score DESC
-                LIMIT %s;
-                """,
-                (limit,),
-            )
+        return await self._fetchall(
+            """
+            SELECT
+            ticker,
+            company_name,
+            sector,
+            benchmark_ticker,
+            benchmark_name,
+            trade_date,
+            anomaly_flag,
+            anomaly_severity_score,
+            relative_price_change_pct,
+            price_change_pct,
+            volume_vs_avg_ratio,
+            close_price,
+                total_volume
+            FROM analytics.stock_anomaly_history
+            ORDER BY trade_date DESC, anomaly_severity_score DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
 
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
-
-    def fetch_watchlist(self, principal_id: str):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_watchlist(self, principal_id: str):
+        return await self._fetchall(
             """
             SELECT
                 watchlist.ticker,
@@ -646,21 +633,15 @@ class MarketRepository:
             """,
             (principal_id,),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def upsert_watchlist_item(
+    async def upsert_watchlist_item(
         self,
         principal_id: str,
         ticker: str,
         price_alert_threshold: float,
         volume_alert_threshold: float,
     ):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        return await self._execute_returning_one(
             """
             INSERT INTO dashboard_watchlists (
                 principal_id,
@@ -685,32 +666,36 @@ class MarketRepository:
             """,
             (principal_id, ticker, price_alert_threshold, volume_alert_threshold),
         )
-        row = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        return row
 
-    def delete_watchlist_item(self, principal_id: str, ticker: str):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            DELETE FROM dashboard_watchlists
-            WHERE principal_id = %s AND ticker = %s;
-            """,
-            (principal_id, ticker),
-        )
-        deleted_count = cur.rowcount
-        conn.commit()
-        cur.close()
-        conn.close()
-        return deleted_count
+    async def delete_watchlist_item(self, principal_id: str, ticker: str):
+        connection = await get_db_connection()
 
-    def fetch_watchlist_alert_history(self, principal_id: str, limit: int = 50):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        def _run():
+            cur = connection.cursor()
+            try:
+                cur.execute(
+                    """
+                    DELETE FROM dashboard_watchlists
+                    WHERE principal_id = %s AND ticker = %s;
+                    """,
+                    (principal_id, ticker),
+                )
+                deleted = cur.rowcount
+                connection.commit()
+                return deleted
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cur.close()
+
+        try:
+            return await asyncio.to_thread(_run)
+        finally:
+            await release_db_connection(connection)
+
+    async def fetch_watchlist_alert_history(self, principal_id: str, limit: int = 50):
+        return await self._fetchall(
             """
             SELECT
                 watchlist.ticker,
@@ -744,17 +729,11 @@ class MarketRepository:
             """,
             (principal_id, limit),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def fetch_sentiment_over_time(self, ticker: str, limit: int = 30):
-        self.verify_stock_search_cache_table()
+    async def fetch_sentiment_over_time(self, ticker: str, limit: int = 30):
+        await self.verify_stock_search_cache_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -772,17 +751,11 @@ class MarketRepository:
             """,
             (ticker, limit),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def get_daily_stock_search_cache(self, ticker: str):
-        self.verify_stock_search_cache_table()
+    async def get_daily_stock_search_cache(self, ticker: str):
+        await self.verify_stock_search_cache_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        return await self._fetchone(
             """
             SELECT *
             FROM stock_search_cache
@@ -792,10 +765,6 @@ class MarketRepository:
             """,
             (ticker,),
         )
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        return row
 
     def get_cache_status(self, row: dict | None, expires_field: str, updated_field: str):
         market_context = get_market_calendar_context()
@@ -839,10 +808,8 @@ class MarketRepository:
             "market_context": serialize_market_context(market_context),
         }
 
-    def fetch_signal_features(self, ticker: str, limit: int = 30):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+    async def fetch_signal_features(self, ticker: str, limit: int = 30):
+        return await self._fetchall(
             """
             SELECT
                 ticker,
@@ -873,17 +840,11 @@ class MarketRepository:
             """,
             (ticker, limit),
         )
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        return rows
 
-    def upsert_live_stock_cache(self, ticker: str, payload: dict):
-        self.verify_stock_search_cache_table()
+    async def upsert_live_stock_cache(self, ticker: str, payload: dict):
+        await self.verify_stock_search_cache_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        await self._execute(
             """
             INSERT INTO stock_search_cache (
                 ticker,
@@ -917,16 +878,11 @@ class MarketRepository:
                 self._get_expiry_time(settings.live_cache_ttl_minutes),
             ),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
 
-    def upsert_news_cache(self, ticker: str, articles: list, summary: dict):
-        self.verify_stock_search_cache_table()
+    async def upsert_news_cache(self, ticker: str, articles: list, summary: dict):
+        await self.verify_stock_search_cache_table()
 
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
+        await self._execute(
             """
             INSERT INTO stock_search_cache (
                 ticker,
@@ -966,9 +922,97 @@ class MarketRepository:
                 self._get_expiry_time(settings.news_summary_cache_ttl_minutes),
             ),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
+
+    async def invalidate_stock_cache(self, ticker: str, scopes: list[str]):
+        await self.verify_stock_search_cache_table()
+
+        normalized_scopes = set(scopes)
+        all_scopes = {"live", "news", "news_summary"}
+
+        if normalized_scopes == all_scopes:
+            connection = await get_db_connection()
+
+            def _delete():
+                cur = connection.cursor()
+                try:
+                    cur.execute(
+                        """
+                        DELETE FROM stock_search_cache
+                        WHERE ticker = %s;
+                        """,
+                        (ticker,),
+                    )
+                    deleted_rows = cur.rowcount
+                    connection.commit()
+                    return {"invalidated": deleted_rows > 0, "deleted_rows": deleted_rows}
+                except Exception:
+                    connection.rollback()
+                    raise
+                finally:
+                    cur.close()
+
+            try:
+                return await asyncio.to_thread(_delete)
+            finally:
+                await release_db_connection(connection)
+
+        set_clauses = ["updated_at = NOW()"]
+        if "live" in normalized_scopes:
+            set_clauses.extend(
+                [
+                    "live_price = NULL",
+                    "live_volume = NULL",
+                    "live_event_time = NULL",
+                    "live_source = NULL",
+                    "live_expires_at = NULL",
+                    "live_updated_at = NULL",
+                ],
+            )
+        if "news" in normalized_scopes:
+            set_clauses.extend(
+                [
+                    "news_articles = NULL",
+                    "news_expires_at = NULL",
+                    "news_updated_at = NULL",
+                ],
+            )
+        if "news_summary" in normalized_scopes:
+            set_clauses.extend(
+                [
+                    "news_summary = NULL",
+                    "summary_source = NULL",
+                    "summary_model = NULL",
+                    "summary_fallback_reason = NULL",
+                    "news_summary_expires_at = NULL",
+                ],
+            )
+
+        connection = await get_db_connection()
+
+        def _update():
+            cur = connection.cursor()
+            try:
+                cur.execute(
+                    f"""
+                    UPDATE stock_search_cache
+                    SET {", ".join(set_clauses)}
+                    WHERE ticker = %s;
+                    """,
+                    (ticker,),
+                )
+                updated_rows = cur.rowcount
+                connection.commit()
+                return {"invalidated": updated_rows > 0, "updated_rows": updated_rows}
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cur.close()
+
+        try:
+            return await asyncio.to_thread(_update)
+        finally:
+            await release_db_connection(connection)
 
 
 market_repository = MarketRepository()
