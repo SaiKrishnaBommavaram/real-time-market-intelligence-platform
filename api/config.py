@@ -82,6 +82,8 @@ class DatabaseSettings:
     name: str
     user: str
     password: str
+    pool_min_size: int
+    pool_max_size: int
 
 
 @dataclass(frozen=True)
@@ -196,6 +198,14 @@ class Settings:
     @property
     def db_password(self) -> str:
         return self.database.password
+
+    @property
+    def db_pool_min_size(self) -> int:
+        return self.database.pool_min_size
+
+    @property
+    def db_pool_max_size(self) -> int:
+        return self.database.pool_max_size
 
     @property
     def allowed_origins(self) -> list[str]:
@@ -343,6 +353,8 @@ def build_settings() -> Settings:
         name=_get_env("MARKET_DB_NAME", "market_data") or "market_data",
         user=_get_env("MARKET_DB_USER", "postgres") or "postgres",
         password=_get_secret("MARKET_DB_PASSWORD", "postgres") or "postgres",
+        pool_min_size=_get_int("MARKET_DB_POOL_MIN_SIZE", "1"),
+        pool_max_size=_get_int("MARKET_DB_POOL_MAX_SIZE", "10"),
     )
 
     cors = CorsSettings(
@@ -409,6 +421,8 @@ def build_settings() -> Settings:
         ("MARKET_REDIS_DB", redis.db),
         ("MARKET_JOB_WORKER_POLL_SECONDS", jobs.worker_poll_seconds),
         ("MARKET_JOB_WORKER_BATCH_SIZE", jobs.worker_batch_size),
+        ("MARKET_DB_POOL_MIN_SIZE", database.pool_min_size),
+        ("MARKET_DB_POOL_MAX_SIZE", database.pool_max_size),
         ("LOCAL_SUMMARIZER_MAX_LENGTH", news.local_summarizer_max_length),
         ("LOCAL_SUMMARIZER_MIN_LENGTH", news.local_summarizer_min_length),
         ("LOCAL_SUMMARIZER_INPUT_MAX_TOKENS", news.local_summarizer_input_max_tokens),
@@ -433,6 +447,9 @@ def build_settings() -> Settings:
 
     if "*" in cors.allowed_origins and cors.allow_credentials:
         raise ValueError("CORS_ALLOW_CREDENTIALS cannot be true when ALLOWED_ORIGINS contains '*'.")
+
+    if database.pool_min_size > database.pool_max_size:
+        raise ValueError("MARKET_DB_POOL_MIN_SIZE cannot exceed MARKET_DB_POOL_MAX_SIZE.")
 
     return Settings(
         environment=environment,
