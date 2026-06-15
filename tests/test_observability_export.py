@@ -26,7 +26,10 @@ def test_render_prometheus_metrics_exports_counters_gauges_and_timings():
 
 
 def test_metrics_route_returns_prometheus_scrape_output(monkeypatch):
-    monkeypatch.setattr(api_main, "run_startup_checks", lambda: None)
+    async def noop():
+        return None
+
+    monkeypatch.setattr(api_main, "run_startup_checks", noop)
     increment_metric("test.route.counter")
 
     with TestClient(api_main.app) as client:
