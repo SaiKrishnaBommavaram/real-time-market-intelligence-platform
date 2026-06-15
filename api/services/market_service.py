@@ -66,6 +66,8 @@ class MarketService:
                 "/v1/watchlist",
                 "/v1/watchlist/alerts",
                 "/v1/observability/metrics",
+                "/v1/admin/cache/invalidate",
+                "/v1/admin/cache/refresh",
             ],
         }
 
@@ -77,8 +79,8 @@ class MarketService:
             "version": settings.app_version,
         }
 
-    def get_readiness(self):
-        checks = self.repository.fetch_readiness_status()
+    async def get_readiness(self):
+        checks = await self.repository.fetch_readiness_status()
         return {
             "status": "ready" if all(checks.values()) else "degraded",
             "service": "market-api",
@@ -87,16 +89,16 @@ class MarketService:
             "checks": checks,
         }
 
-    def get_market_summary(self):
-        rows = self.repository.fetch_market_summary()
+    async def get_market_summary(self):
+        rows = await self.repository.fetch_market_summary()
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_stock_summary(self, ticker: str):
+    async def get_stock_summary(self, ticker: str):
         normalized_ticker = normalize_ticker(ticker)
-        rows = self.repository.fetch_stock_summary(normalized_ticker)
+        rows = await self.repository.fetch_stock_summary(normalized_ticker)
 
         if not rows:
             raise HTTPException(
@@ -110,11 +112,11 @@ class MarketService:
             "data": rows,
         }
 
-    def get_live_stock_data(self, ticker: str):
+    async def get_live_stock_data(self, ticker: str):
         normalized_ticker = normalize_ticker(ticker)
         symbol_profile = get_symbol_profile(normalized_ticker)
         market_context = get_market_calendar_context()
-        cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+        cached_row = await self.repository.get_daily_stock_search_cache(normalized_ticker)
         live_cache = self._build_cache_metadata(
             cached_row,
             "live_expires_at",
@@ -155,7 +157,7 @@ class MarketService:
                 "market_context": serialize_market_context(market_context),
                 "cache": self._build_fresh_cache_metadata(settings.live_cache_ttl_minutes),
             }
-            self.repository.upsert_live_stock_cache(normalized_ticker, payload)
+            await self.repository.upsert_live_stock_cache(normalized_ticker, payload)
             return payload
 
         except HTTPException:
@@ -198,9 +200,9 @@ class MarketService:
                 detail=f"Failed to fetch market data for {normalized_ticker}: {error_message}",
             )
 
-    def get_stock_news(self, ticker: str):
+    async def get_stock_news(self, ticker: str):
         normalized_ticker = normalize_ticker(ticker)
-        cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+        cached_row = await self.repository.get_daily_stock_search_cache(normalized_ticker)
         news_cache = self._build_cache_metadata(
             cached_row,
             "news_expires_at",
@@ -226,7 +228,7 @@ class MarketService:
         try:
             articles = fetch_news_articles(normalized_ticker)
             summary = summarize_news_with_local_model(normalized_ticker, articles)
-            self.repository.upsert_news_cache(normalized_ticker, articles, summary)
+            await self.repository.upsert_news_cache(normalized_ticker, articles, summary)
 
             return {
                 "ticker": normalized_ticker,
@@ -254,11 +256,11 @@ class MarketService:
                 }
             raise
 
-    def get_stock_news_summary(self, ticker: str):
+    async def get_stock_news_summary(self, ticker: str):
         normalized_ticker = normalize_ticker(ticker)
 
         try:
-            cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+            cached_row = await self.repository.get_daily_stock_search_cache(normalized_ticker)
             news_summary_cache = self._build_cache_metadata(
                 cached_row,
                 "news_summary_expires_at",
@@ -291,7 +293,7 @@ class MarketService:
                 articles = fetch_news_articles(normalized_ticker)
 
             summary = summarize_news_with_local_model(normalized_ticker, articles)
-            self.repository.upsert_news_cache(normalized_ticker, articles, summary)
+            await self.repository.upsert_news_cache(normalized_ticker, articles, summary)
             summary["article_count"] = len(articles)
             summary["cache"] = self._build_fresh_cache_metadata(
                 settings.news_summary_cache_ttl_minutes,
@@ -310,7 +312,7 @@ class MarketService:
             }
             return summary
         except Exception as exc:
-            cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+            cached_row = await self.repository.get_daily_stock_search_cache(normalized_ticker)
             news_summary_cache = self._build_cache_metadata(
                 cached_row,
                 "news_summary_expires_at",
@@ -342,59 +344,49 @@ class MarketService:
             summary["cache"] = news_summary_cache
             return summary
 
-    def refresh_stock_news_summary(self, ticker: str):
+    async def refresh_stock_news_summary(self, ticker: str):
         normalized_ticker = normalize_ticker(ticker)
-        cached_row = self.repository.get_daily_stock_search_cache(normalized_ticker)
+        cached_row = await self.repository.get_daily_stock_search_cache(normalized_ticker)
         articles = cached_row["news_articles"] if cached_row and cached_row.get("news_articles") else fetch_news_articles(normalized_ticker)
         summary = summarize_news_with_local_model(normalized_ticker, articles)
-        self.repository.upsert_news_cache(normalized_ticker, articles, summary)
+        await self.repository.upsert_news_cache(normalized_ticker, articles, summary)
         summary["article_count"] = len(articles)
         summary["cache"] = self._build_fresh_cache_metadata(settings.news_summary_cache_ttl_minutes)
         return summary
 
-    def get_intraday_candles(self, ticker: str, limit: int = 48):
+    async def get_intraday_candles(self, ticker: str, limit: int = 48):
         normalized_ticker = normalize_ticker(ticker)
-        rows = self.repository.fetch_intraday_candles(normalized_ticker, limit=limit)
+        rows = await self.repository.fetch_intraday_candles(normalized_ticker, limit=limit)
         return {
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
         }
 
-    def get_intraday_movers(self, limit: int = 12):
-        rows = self.repository.fetch_intraday_movers(limit=limit)
+    async def get_intraday_movers(self, limit: int = 12):
+        rows = await self.repository.fetch_intraday_movers(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_top_movers(self, limit: int = 10):
-        rows = self.repository.fetch_top_movers(limit=limit)
+    async def get_top_movers(self, limit: int = 10):
+        rows = await self.repository.fetch_top_movers(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_market_volatility(self, limit: int = 30):
-        rows = self.repository.fetch_market_volatility(limit=limit)
+    async def get_market_volatility(self, limit: int = 30):
+        rows = await self.repository.fetch_market_volatility(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_sentiment_over_time(self, ticker: str, limit: int = 30):
+    async def get_sentiment_over_time(self, ticker: str, limit: int = 30):
         normalized_ticker = normalize_ticker(ticker)
-        rows = self.repository.fetch_sentiment_over_time(normalized_ticker, limit=limit)
-
-        return {
-            "ticker": normalized_ticker,
-            "count": len(rows),
-            "data": rows,
-        }
-
-    def get_ticker_correlation(self, ticker: str, limit: int = 8):
-        normalized_ticker = normalize_ticker(ticker)
-        rows = self.repository.fetch_ticker_correlation(normalized_ticker, limit=limit)
+        rows = await self.repository.fetch_sentiment_over_time(normalized_ticker, limit=limit)
 
         return {
             "ticker": normalized_ticker,
@@ -402,51 +394,61 @@ class MarketService:
             "data": rows,
         }
 
-    def get_drawdown_recovery(self, limit: int = 30):
-        rows = self.repository.fetch_drawdown_recovery(limit=limit)
+    async def get_ticker_correlation(self, ticker: str, limit: int = 8):
+        normalized_ticker = normalize_ticker(ticker)
+        rows = await self.repository.fetch_ticker_correlation(normalized_ticker, limit=limit)
+
+        return {
+            "ticker": normalized_ticker,
+            "count": len(rows),
+            "data": rows,
+        }
+
+    async def get_drawdown_recovery(self, limit: int = 30):
+        rows = await self.repository.fetch_drawdown_recovery(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_risk_indicators(self, limit: int = 30):
-        rows = self.repository.fetch_risk_indicators(limit=limit)
+    async def get_risk_indicators(self, limit: int = 30):
+        rows = await self.repository.fetch_risk_indicators(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_sector_performance(self, limit: int = 20):
-        rows = self.repository.fetch_sector_performance(limit=limit)
+    async def get_sector_performance(self, limit: int = 20):
+        rows = await self.repository.fetch_sector_performance(limit=limit)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_anomaly_history(self, limit: int = 50, ticker: str | None = None):
+    async def get_anomaly_history(self, limit: int = 50, ticker: str | None = None):
         normalized_ticker = normalize_ticker(ticker) if ticker else None
-        rows = self.repository.fetch_anomaly_history(limit=limit, ticker=normalized_ticker)
+        rows = await self.repository.fetch_anomaly_history(limit=limit, ticker=normalized_ticker)
         return {
             "count": len(rows),
             "data": rows,
         }
 
-    def get_watchlist(self, principal_id: str):
-        rows = self.repository.fetch_watchlist(principal_id)
+    async def get_watchlist(self, principal_id: str):
+        rows = await self.repository.fetch_watchlist(principal_id)
         return {
             "principal_id": principal_id,
             "count": len(rows),
             "data": rows,
         }
 
-    def upsert_watchlist_item(
+    async def upsert_watchlist_item(
         self,
         principal_id: str,
         ticker: str,
         price_alert_threshold: float,
         volume_alert_threshold: float,
     ):
-        row = self.repository.upsert_watchlist_item(
+        row = await self.repository.upsert_watchlist_item(
             principal_id=principal_id,
             ticker=normalize_ticker(ticker),
             price_alert_threshold=price_alert_threshold,
@@ -455,13 +457,13 @@ class MarketService:
         increment_metric("api.watchlist.upsert")
         return row
 
-    def delete_watchlist_item(self, principal_id: str, ticker: str):
-        deleted_count = self.repository.delete_watchlist_item(principal_id, normalize_ticker(ticker))
+    async def delete_watchlist_item(self, principal_id: str, ticker: str):
+        deleted_count = await self.repository.delete_watchlist_item(principal_id, normalize_ticker(ticker))
         increment_metric("api.watchlist.delete")
         return {"deleted": deleted_count > 0}
 
-    def get_watchlist_alert_history(self, principal_id: str, limit: int = 50):
-        rows = self.repository.fetch_watchlist_alert_history(principal_id, limit=limit)
+    async def get_watchlist_alert_history(self, principal_id: str, limit: int = 50):
+        rows = await self.repository.fetch_watchlist_alert_history(principal_id, limit=limit)
         return {
             "principal_id": principal_id,
             "count": len(rows),
@@ -471,14 +473,50 @@ class MarketService:
     def get_observability_metrics(self):
         return get_metrics_snapshot()
 
-    def get_signal_features(self, ticker: str, limit: int = 30):
+    async def get_signal_features(self, ticker: str, limit: int = 30):
         normalized_ticker = normalize_ticker(ticker)
-        rows = self.repository.fetch_signal_features(normalized_ticker, limit=limit)
+        rows = await self.repository.fetch_signal_features(normalized_ticker, limit=limit)
         return {
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
         }
+
+    async def invalidate_cache(self, ticker: str, scopes: list[str]):
+        normalized_ticker = normalize_ticker(ticker)
+        outcome = await self.repository.invalidate_stock_cache(normalized_ticker, scopes)
+        increment_metric("api.cache.invalidate.request")
+        for scope in scopes:
+            increment_metric(f"api.cache.invalidate.scope.{scope}")
+        if outcome.get("invalidated"):
+            increment_metric("api.cache.invalidate.success")
+        else:
+            increment_metric("api.cache.invalidate.miss")
+        return {
+            "ticker": normalized_ticker,
+            "outcome": outcome,
+            "scopes": [
+                {"scope": scope, "invalidated": outcome.get("invalidated", False), "refreshed": False}
+                for scope in scopes
+            ],
+        }
+
+    async def refresh_cache(self, ticker: str, scopes: list[str]):
+        normalized_ticker = normalize_ticker(ticker)
+        results = []
+
+        for scope in scopes:
+            if scope == "live":
+                await self.get_live_stock_data(normalized_ticker)
+            elif scope == "news":
+                await self.get_stock_news(normalized_ticker)
+            elif scope == "news_summary":
+                await self.refresh_stock_news_summary(normalized_ticker)
+            increment_metric(f"api.cache.refresh.scope.{scope}")
+            results.append({"scope": scope, "refreshed": True, "invalidated": False})
+
+        increment_metric("api.cache.refresh.request")
+        return {"ticker": normalized_ticker, "scopes": results, "invalidated": False}
 
 
 market_service = MarketService(market_repository)
