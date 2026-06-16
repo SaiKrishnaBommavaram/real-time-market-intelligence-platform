@@ -71,6 +71,25 @@ def upload_event_to_s3(s3_client, event):
     return s3_key
 
 
+def upload_dead_letter_to_s3(s3_client, payload, validation_error):
+    now = datetime.now(timezone.utc)
+    date_partition = now.strftime("%Y-%m-%d")
+    timestamp = now.strftime("%Y%m%dT%H%M%S%f")
+    s3_key = f"invalid/stocks/date={date_partition}/event_{timestamp}.json"
+    body = {
+        "payload": payload,
+        "validation_error": validation_error,
+        "created_at": now.isoformat(),
+    }
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=s3_key,
+        Body=json.dumps(body),
+        ContentType="application/json",
+    )
+    return s3_key
+
+
 def upload_event_to_s3_with_retry(s3_client, event, message):
     return retry(
         "upload_event_to_s3",
@@ -121,6 +140,11 @@ def main():
                 event = validate_stock_event(message.value)
             except (TypeError, ValueError) as exc:
                 increment_metric("s3_consumer.invalid_event")
+                try:
+                    upload_dead_letter_to_s3(s3_client, message.value, str(exc))
+                    increment_metric("s3_consumer.dead_letter_written")
+                except (BotoCoreError, ClientError):
+                    increment_metric("s3_consumer.dead_letter_failed")
                 logger.warning(
                     "invalid_event_skipped",
                     extra={
