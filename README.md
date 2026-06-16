@@ -28,6 +28,7 @@ An end-to-end market data platform that:
    - analytics endpoints for movers, volatility, sentiment-over-time, ticker correlation, intraday rollups, and reusable signal features
    - persisted watchlists and watchlist alert history scoped to the active API principal
    - an observability metrics snapshot plus Prometheus scrape export for API cache/auth/request behavior
+   - response metadata with source freshness and lineage for warehouse-backed analytics payloads
    - route handlers from `api/routes/`
    - business logic from `api/services/`
    - persistence access from `api/repositories/`
@@ -317,6 +318,23 @@ Watchlist and observability routes:
 The watchlist routes are scoped to the current request principal. When `MARKET_API_KEY` is enabled, the backend derives a stable profile key from the presented API key and persists watchlist thresholds in PostgreSQL instead of relying only on browser local storage.
 
 The observability JSON endpoint reports API request counts/latency, auth and rate-limit events, cache hit vs stale fallback counters, and news-provider/summarizer counters. `/metrics` and `/v1/metrics` expose the same in-process metrics as Prometheus-compatible scrape output for standard monitoring stacks.
+
+Consumer-side event quality handling now writes invalid Kafka payloads into explicit dead-letter locations instead of only logging and skipping them:
+
+- PostgreSQL consumer: `public.invalid_stock_events`
+- S3 consumer: `invalid/stocks/date=.../event_....json`
+
+API-owned operational tables now have additional supporting indexes for:
+
+- cache recency scans on `public.stock_search_cache`
+- watchlist recency scans on `public.dashboard_watchlists`
+- principal/status queue lookups on `public.async_jobs`
+
+Recommended retention policy:
+
+- keep `public.invalid_stock_events` for a short operational window such as 7 to 30 days
+- prune old `public.async_jobs` rows after downstream audit needs are satisfied
+- prune stale `public.stock_search_cache` rows beyond the current trading horizon if table size grows materially
 
 Cache-backed endpoints now return cache freshness metadata such as `state`, `is_stale`, `expires_at`, and `updated_at` so callers can distinguish fresh values from stale fallback responses.
 
