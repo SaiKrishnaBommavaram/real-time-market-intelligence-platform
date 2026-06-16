@@ -66,6 +66,9 @@ ADD COLUMN IF NOT EXISTS news_summary_expires_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_stock_search_cache_ticker_cache_date
 ON public.stock_search_cache (ticker, cache_date DESC);
 
+CREATE INDEX IF NOT EXISTS idx_stock_search_cache_updated_at
+ON public.stock_search_cache (updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS public.dashboard_watchlists (
     id SERIAL PRIMARY KEY,
     principal_id VARCHAR(128) NOT NULL,
@@ -79,6 +82,9 @@ CREATE TABLE IF NOT EXISTS public.dashboard_watchlists (
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_watchlists_principal
 ON public.dashboard_watchlists (principal_id, ticker);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_watchlists_updated_at
+ON public.dashboard_watchlists (updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.async_jobs (
     id BIGSERIAL PRIMARY KEY,
@@ -106,6 +112,25 @@ ON public.async_jobs (status, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_async_jobs_active_job_key
 ON public.async_jobs (active_job_key)
 WHERE active_job_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_async_jobs_requested_by_status
+ON public.async_jobs (requested_by, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.invalid_stock_events (
+    id BIGSERIAL PRIMARY KEY,
+    source_topic VARCHAR(255) NOT NULL,
+    source_partition INTEGER NOT NULL,
+    source_offset BIGINT NOT NULL,
+    payload JSONB NOT NULL,
+    validation_error TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invalid_stock_events_created_at
+ON public.invalid_stock_events (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_invalid_stock_events_topic_partition_offset
+ON public.invalid_stock_events (source_topic, source_partition, source_offset DESC);
 
 CREATE TABLE IF NOT EXISTS public.symbol_reference (
     canonical_ticker VARCHAR(10) PRIMARY KEY,
