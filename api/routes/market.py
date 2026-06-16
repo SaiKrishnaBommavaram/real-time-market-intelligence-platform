@@ -9,6 +9,7 @@ from api.schemas import (
     AnomalyHistoryResponse,
     AsyncJobRequest,
     AsyncJobResponse,
+    BenchmarkRelativeStrengthResponse,
     CacheAdminRequest,
     CacheAdminResponse,
     CorrelationResponse,
@@ -19,6 +20,7 @@ from api.schemas import (
     IntradayMoversResponse,
     LiveStockResponse,
     MarketSummaryResponse,
+    MarketRegimeSummaryResponse,
     MoversResponse,
     NewsSummaryResponse,
     ObservabilityResponse,
@@ -232,6 +234,22 @@ async def get_risk_indicators(limit: SmallLimitQuery = 30):
 async def get_sector_performance(limit: SmallLimitQuery = 20):
     try:
         return await market_service.get_sector_performance(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/benchmarks", response_model=BenchmarkRelativeStrengthResponse)
+async def get_benchmark_relative_strength(limit: SmallLimitQuery = 20):
+    try:
+        return await market_service.get_benchmark_relative_strength(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/analytics/regimes", response_model=MarketRegimeSummaryResponse)
+async def get_market_regime_summary(limit: SmallLimitQuery = 30):
+    try:
+        return await market_service.get_market_regime_summary(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
