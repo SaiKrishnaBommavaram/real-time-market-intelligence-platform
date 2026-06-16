@@ -17,6 +17,24 @@ class CacheMetadata(BaseModel):
     market_context: dict | None = None
 
 
+class LineageMetadata(BaseModel):
+    source_table: str
+    mart_table: str | None = None
+    source_max_event_time: datetime | None = None
+    source_max_inserted_at: datetime | None = None
+    mart_max_timestamp: datetime | None = None
+    latest_data_date: date | None = None
+    source_lag_seconds: int | None = None
+    mart_lag_seconds: int | None = None
+    provenance: list[str] = Field(default_factory=list)
+
+
+class ResponseMetadata(BaseModel):
+    requested_at: datetime
+    row_count: int
+    lineage: LineageMetadata
+
+
 class RootResponse(BaseModel):
     message: str
     available_endpoints: list[str]
@@ -87,12 +105,14 @@ class DailySummaryRow(BaseModel):
 class MarketSummaryResponse(BaseModel):
     count: int
     data: list[DailySummaryRow]
+    metadata: ResponseMetadata
 
 
 class StockSummaryResponse(BaseModel):
     ticker: str
     count: int
     data: list[DailySummaryRow]
+    metadata: ResponseMetadata
 
 
 class LiveStockResponse(BaseModel):
@@ -191,6 +211,7 @@ class MoversRow(BaseModel):
 class MoversResponse(BaseModel):
     count: int
     data: list[MoversRow]
+    metadata: ResponseMetadata
 
 
 class VolatilityRow(BaseModel):
@@ -204,6 +225,7 @@ class VolatilityRow(BaseModel):
 class VolatilityResponse(BaseModel):
     count: int
     data: list[VolatilityRow]
+    metadata: ResponseMetadata
 
 
 class SentimentTrendRow(BaseModel):
@@ -219,6 +241,7 @@ class SentimentTrendResponse(BaseModel):
     ticker: str
     count: int
     data: list[SentimentTrendRow]
+    metadata: ResponseMetadata
 
 
 class CorrelationRow(BaseModel):
@@ -231,6 +254,7 @@ class CorrelationResponse(BaseModel):
     ticker: str
     count: int
     data: list[CorrelationRow]
+    metadata: ResponseMetadata
 
 
 class DrawdownRecoveryRow(BaseModel):
@@ -247,6 +271,7 @@ class DrawdownRecoveryRow(BaseModel):
 class DrawdownRecoveryResponse(BaseModel):
     count: int
     data: list[DrawdownRecoveryRow]
+    metadata: ResponseMetadata
 
 
 class RiskIndicatorRow(BaseModel):
@@ -264,6 +289,7 @@ class RiskIndicatorRow(BaseModel):
 class RiskIndicatorsResponse(BaseModel):
     count: int
     data: list[RiskIndicatorRow]
+    metadata: ResponseMetadata
 
 
 class SectorPerformanceRow(BaseModel):
@@ -282,6 +308,48 @@ class SectorPerformanceRow(BaseModel):
 class SectorPerformanceResponse(BaseModel):
     count: int
     data: list[SectorPerformanceRow]
+    metadata: ResponseMetadata
+
+
+class BenchmarkRelativeStrengthRow(BaseModel):
+    benchmark_ticker: str
+    benchmark_name: str | None = None
+    trade_date: date
+    benchmark_price_change_pct: float | None = None
+    ticker_count: int
+    avg_relative_price_change_pct: float
+    outperformer_count: int
+    underperformer_count: int
+    top_relative_ticker: str | None = None
+    top_relative_price_change_pct: float | None = None
+    total_volume: int
+    last_updated_at: datetime
+
+
+class BenchmarkRelativeStrengthResponse(BaseModel):
+    count: int
+    data: list[BenchmarkRelativeStrengthRow]
+    metadata: ResponseMetadata
+
+
+class MarketRegimeSummaryRow(BaseModel):
+    trade_date: date
+    regime_label: str
+    avg_relative_move_pct: float
+    avg_volume_ratio: float
+    avg_volatility_7d: float | None = None
+    risk_off_share: float
+    outperformer_share: float
+    ticker_count: int
+    anomaly_count: int
+    benchmark_leader: str | None = None
+    last_updated_at: datetime
+
+
+class MarketRegimeSummaryResponse(BaseModel):
+    count: int
+    data: list[MarketRegimeSummaryRow]
+    metadata: ResponseMetadata
 
 
 class AnomalyHistoryRow(BaseModel):
@@ -303,6 +371,7 @@ class AnomalyHistoryRow(BaseModel):
 class AnomalyHistoryResponse(BaseModel):
     count: int
     data: list[AnomalyHistoryRow]
+    metadata: ResponseMetadata
 
 
 class IntradayCandleRow(BaseModel):
@@ -330,6 +399,7 @@ class IntradayCandlesResponse(BaseModel):
     ticker: str
     count: int
     data: list[IntradayCandleRow]
+    metadata: ResponseMetadata
 
 
 class IntradayMoverRow(BaseModel):
@@ -352,6 +422,7 @@ class IntradayMoverRow(BaseModel):
 class IntradayMoversResponse(BaseModel):
     count: int
     data: list[IntradayMoverRow]
+    metadata: ResponseMetadata
 
 
 class WatchlistItem(BaseModel):
@@ -370,6 +441,7 @@ class WatchlistResponse(BaseModel):
     principal_id: str
     count: int
     data: list[WatchlistItem]
+    metadata: ResponseMetadata
 
 
 class WatchlistUpsertRequest(BaseModel):
@@ -400,6 +472,7 @@ class WatchlistAlertHistoryResponse(BaseModel):
     principal_id: str
     count: int
     data: list[WatchlistAlertHistoryRow]
+    metadata: ResponseMetadata
 
 
 class DeleteResponse(BaseModel):
@@ -467,3 +540,4 @@ class SignalFeatureResponse(BaseModel):
     ticker: str
     count: int
     data: list[SignalFeatureRow]
+    metadata: ResponseMetadata
