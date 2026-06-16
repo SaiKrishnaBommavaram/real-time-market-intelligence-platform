@@ -21,6 +21,50 @@ class MarketRepository:
     def _get_expiry_time(self, ttl_minutes: int):
         return datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
 
+    async def fetch_lineage_metadata(
+        self,
+        source_table: str,
+        source_event_field: str | None = "event_time",
+        source_inserted_field: str | None = "inserted_at",
+        mart_table: str | None = None,
+        mart_timestamp_field: str | None = None,
+        mart_date_field: str | None = None,
+    ):
+        source_select = [
+            f"MAX({source_event_field}) AS source_max_event_time"
+            if source_event_field
+            else "NULL AS source_max_event_time",
+            f"MAX({source_inserted_field}) AS source_max_inserted_at"
+            if source_inserted_field
+            else "NULL AS source_max_inserted_at",
+        ]
+        source_row = await self._fetchone(
+            f"""
+            SELECT
+                {", ".join(source_select)}
+            FROM {source_table};
+            """
+        )
+        mart_row = None
+        if mart_table and mart_timestamp_field:
+            mart_row = await self._fetchone(
+                f"""
+                SELECT
+                    MAX({mart_timestamp_field}) AS mart_max_timestamp
+                    {f", MAX({mart_date_field}) AS latest_data_date" if mart_date_field else ""}
+                FROM {mart_table};
+                """
+            )
+
+        return {
+            "source_table": source_table,
+            "mart_table": mart_table,
+            "source_max_event_time": source_row.get("source_max_event_time") if source_row else None,
+            "source_max_inserted_at": source_row.get("source_max_inserted_at") if source_row else None,
+            "mart_max_timestamp": mart_row.get("mart_max_timestamp") if mart_row else None,
+            "latest_data_date": mart_row.get("latest_data_date") if mart_row and mart_date_field else None,
+        }
+
     async def _fetchone(self, query: str, params=None):
         connection = await get_db_connection()
 
@@ -559,6 +603,56 @@ class MarketRepository:
             FROM analytics.sector_daily_summary
             WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
             ORDER BY COALESCE(avg_relative_price_change_pct, avg_price_change_pct) DESC, total_volume DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+
+    async def fetch_benchmark_relative_strength(self, limit: int = 20):
+        return await self._fetchall(
+            """
+            WITH latest_trade_date AS (
+                SELECT MAX(trade_date) AS trade_date
+                FROM analytics.benchmark_relative_strength
+            )
+            SELECT
+                benchmark_ticker,
+                benchmark_name,
+                trade_date,
+                benchmark_price_change_pct,
+                ticker_count,
+                avg_relative_price_change_pct,
+                outperformer_count,
+                underperformer_count,
+                top_relative_ticker,
+                top_relative_price_change_pct,
+                total_volume,
+                last_updated_at
+            FROM analytics.benchmark_relative_strength
+            WHERE trade_date = (SELECT trade_date FROM latest_trade_date)
+            ORDER BY ABS(avg_relative_price_change_pct) DESC, total_volume DESC
+            LIMIT %s;
+            """,
+            (limit,),
+        )
+
+    async def fetch_market_regime_summary(self, limit: int = 30):
+        return await self._fetchall(
+            """
+            SELECT
+                trade_date,
+                regime_label,
+                avg_relative_move_pct,
+                avg_volume_ratio,
+                avg_volatility_7d,
+                risk_off_share,
+                outperformer_share,
+                ticker_count,
+                anomaly_count,
+                benchmark_leader,
+                last_updated_at
+            FROM analytics.market_regime_summary
+            ORDER BY trade_date DESC
             LIMIT %s;
             """,
             (limit,),
