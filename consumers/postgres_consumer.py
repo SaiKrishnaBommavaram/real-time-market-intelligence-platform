@@ -86,6 +86,34 @@ def insert_event(conn, event):
         cur.close()
 
 
+def insert_dead_letter_event(conn, payload, validation_error, message):
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO invalid_stock_events (
+                source_topic,
+                source_partition,
+                source_offset,
+                payload,
+                validation_error,
+                created_at
+            )
+            VALUES (%s, %s, %s, %s::jsonb, %s, NOW());
+            """,
+            (
+                message.topic,
+                message.partition,
+                message.offset,
+                json.dumps(payload),
+                validation_error[:2000],
+            ),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+
+
 def commit_offset(consumer, message, reason):
     retry(
         "commit_offset",
@@ -142,6 +170,12 @@ def main():
                 event = validate_stock_event(message.value)
             except (TypeError, ValueError) as exc:
                 increment_metric("postgres_consumer.invalid_event")
+                try:
+                    insert_dead_letter_event(conn, message.value, str(exc), message)
+                    increment_metric("postgres_consumer.dead_letter_written")
+                except psycopg2.Error:
+                    conn.rollback()
+                    increment_metric("postgres_consumer.dead_letter_failed")
                 logger.warning(
                     "invalid_event_skipped",
                     extra={
