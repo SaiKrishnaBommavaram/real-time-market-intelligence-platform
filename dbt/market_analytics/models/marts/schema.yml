@@ -188,6 +188,69 @@ models:
     tests:
       - unique:
           column_name: "sector || '-' || trade_date::text"
+  - name: benchmark_relative_strength
+    description: "Benchmark-relative breadth and leader context for sector ETFs and SPY."
+    columns:
+      - name: benchmark_ticker
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: ticker_count
+        tests:
+          - not_null
+      - name: avg_relative_price_change_pct
+        tests:
+          - not_null
+      - name: outperformer_count
+        tests:
+          - not_null
+      - name: underperformer_count
+        tests:
+          - not_null
+      - name: total_volume
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "benchmark_ticker || '-' || trade_date::text"
+  - name: market_regime_summary
+    description: "Broad market regime summary derived from benchmark-relative moves, volume, and rolling volatility."
+    columns:
+      - name: trade_date
+        tests:
+          - not_null
+      - name: regime_label
+        tests:
+          - not_null
+      - name: avg_relative_move_pct
+        tests:
+          - not_null
+      - name: avg_volume_ratio
+        tests:
+          - not_null
+      - name: risk_off_share
+        tests:
+          - not_null
+      - name: outperformer_share
+        tests:
+          - not_null
+      - name: ticker_count
+        tests:
+          - not_null
+      - name: anomaly_count
+        tests:
+          - not_null
+      - name: last_updated_at
+        tests:
+          - not_null
+    tests:
+      - unique:
+          column_name: "trade_date::text"
   - name: stock_anomaly_history
     description: "History of non-normal daily anomalies with severity scoring."
     columns:
