@@ -37,6 +37,66 @@ class MarketService:
             "market_context": serialize_market_context(market_context),
         }
 
+    async def _build_response_metadata(
+        self,
+        *,
+        row_count: int,
+        source_table: str,
+        source_event_field: str | None = "event_time",
+        source_inserted_field: str | None = "inserted_at",
+        mart_table: str | None = None,
+        mart_timestamp_field: str | None = None,
+        mart_date_field: str | None = None,
+        provenance: list[str] | None = None,
+    ):
+        lineage = await self.repository.fetch_lineage_metadata(
+            source_table=source_table,
+            source_event_field=source_event_field,
+            source_inserted_field=source_inserted_field,
+            mart_table=mart_table,
+            mart_timestamp_field=mart_timestamp_field,
+            mart_date_field=mart_date_field,
+        )
+        now = datetime.now(timezone.utc)
+        source_max_event_time = lineage.get("source_max_event_time")
+        source_max_inserted_at = lineage.get("source_max_inserted_at")
+        mart_max_timestamp = lineage.get("mart_max_timestamp")
+        if mart_max_timestamp and not isinstance(mart_max_timestamp, datetime):
+            mart_max_timestamp = datetime.combine(
+                mart_max_timestamp,
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            )
+            lineage["mart_max_timestamp"] = mart_max_timestamp.isoformat()
+        lineage["source_lag_seconds"] = (
+            max(
+                int(
+                    (
+                        now
+                        - (
+                            source_max_event_time
+                            or source_max_inserted_at
+                        )
+                    ).total_seconds()
+                ),
+                0,
+            )
+            if (source_max_event_time or source_max_inserted_at)
+            else None
+        )
+        lineage["mart_lag_seconds"] = (
+            max(int((now - mart_max_timestamp).total_seconds()), 0)
+            if mart_max_timestamp
+            else None
+        )
+        lineage["provenance"] = provenance or []
+
+        return {
+            "requested_at": now.isoformat(),
+            "row_count": row_count,
+            "lineage": lineage,
+        }
+
     def get_root_payload(self):
         return {
             "message": "Real-Time Market Intelligence API is running",
@@ -61,6 +121,8 @@ class MarketService:
                 "/v1/analytics/drawdowns",
                 "/v1/analytics/risk",
                 "/v1/analytics/sectors",
+                "/v1/analytics/benchmarks",
+                "/v1/analytics/regimes",
                 "/v1/analytics/anomalies",
                 "/v1/analytics/features/{ticker}",
                 "/v1/watchlist",
@@ -94,6 +156,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary"],
+            ),
         }
 
     async def get_stock_summary(self, ticker: str):
@@ -110,6 +180,14 @@ class MarketService:
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary"],
+            ),
         }
 
     async def get_live_stock_data(self, ticker: str):
@@ -361,6 +439,14 @@ class MarketService:
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.intraday_stock_rollup",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field=None,
+                provenance=["public.stock_prices", "analytics.intraday_stock_rollup"],
+            ),
         }
 
     async def get_intraday_movers(self, limit: int = 12):
@@ -368,6 +454,13 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.intraday_stock_rollup",
+                mart_timestamp_field="last_updated_at",
+                provenance=["public.stock_prices", "analytics.intraday_stock_rollup"],
+            ),
         }
 
     async def get_top_movers(self, limit: int = 10):
@@ -375,6 +468,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary"],
+            ),
         }
 
     async def get_market_volatility(self, limit: int = 30):
@@ -382,6 +483,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary"],
+            ),
         }
 
     async def get_sentiment_over_time(self, ticker: str, limit: int = 30):
@@ -392,6 +501,16 @@ class MarketService:
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_search_cache",
+                source_event_field=None,
+                source_inserted_field="updated_at",
+                mart_table="public.stock_search_cache",
+                mart_timestamp_field="updated_at",
+                mart_date_field="cache_date",
+                provenance=["public.stock_search_cache"],
+            ),
         }
 
     async def get_ticker_correlation(self, ticker: str, limit: int = 8):
@@ -402,6 +521,14 @@ class MarketService:
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary"],
+            ),
         }
 
     async def get_drawdown_recovery(self, limit: int = 30):
@@ -409,6 +536,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.stock_drawdown_recovery",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.stock_drawdown_recovery"],
+            ),
         }
 
     async def get_risk_indicators(self, limit: int = 30):
@@ -416,6 +551,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.stock_risk_indicators",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.stock_risk_indicators"],
+            ),
         }
 
     async def get_sector_performance(self, limit: int = 20):
@@ -423,6 +566,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.sector_daily_summary",
+                mart_timestamp_field="trade_date",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.sector_daily_summary"],
+            ),
         }
 
     async def get_anomaly_history(self, limit: int = 50, ticker: str | None = None):
@@ -431,6 +582,14 @@ class MarketService:
         return {
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.stock_anomaly_history",
+                mart_timestamp_field="trade_date",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.stock_anomaly_history"],
+            ),
         }
 
     async def get_watchlist(self, principal_id: str):
@@ -439,6 +598,15 @@ class MarketService:
             "principal_id": principal_id,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.dashboard_watchlists",
+                source_event_field=None,
+                source_inserted_field="updated_at",
+                mart_table="public.dashboard_watchlists",
+                mart_timestamp_field="updated_at",
+                provenance=["public.dashboard_watchlists", "public.symbol_reference"],
+            ),
         }
 
     async def upsert_watchlist_item(
@@ -468,6 +636,16 @@ class MarketService:
             "principal_id": principal_id,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.dashboard_watchlists",
+                source_event_field=None,
+                source_inserted_field="updated_at",
+                mart_table="analytics.daily_stock_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.dashboard_watchlists", "analytics.daily_stock_summary"],
+            ),
         }
 
     def get_observability_metrics(self):
@@ -480,6 +658,44 @@ class MarketService:
             "ticker": normalized_ticker,
             "count": len(rows),
             "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.stock_signal_feature_store",
+                mart_timestamp_field="feature_generated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.stock_signal_feature_store"],
+            ),
+        }
+
+    async def get_benchmark_relative_strength(self, limit: int = 20):
+        rows = await self.repository.fetch_benchmark_relative_strength(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.benchmark_relative_strength",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.daily_stock_summary", "analytics.benchmark_relative_strength"],
+            ),
+        }
+
+    async def get_market_regime_summary(self, limit: int = 30):
+        rows = await self.repository.fetch_market_regime_summary(limit=limit)
+        return {
+            "count": len(rows),
+            "data": rows,
+            "metadata": await self._build_response_metadata(
+                row_count=len(rows),
+                source_table="public.stock_prices",
+                mart_table="analytics.market_regime_summary",
+                mart_timestamp_field="last_updated_at",
+                mart_date_field="trade_date",
+                provenance=["public.stock_prices", "analytics.stock_risk_indicators", "analytics.market_regime_summary"],
+            ),
         }
 
     async def invalidate_cache(self, ticker: str, scopes: list[str]):
