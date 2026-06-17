@@ -55,6 +55,17 @@ const dashboardQueryKeys = {
   intradayCandles: (ticker) => ["intraday-candles", ticker],
 };
 
+function normalizeTicker(value) {
+  return value ? String(value).trim().toUpperCase() : DEFAULT_TICKER;
+}
+
+function toWatchlistErrorMessage(error, fallbackMessage) {
+  return (
+    error?.response?.data?.detail ||
+    (error instanceof Error ? error.message : fallbackMessage)
+  );
+}
+
 function loadStoredWatchlist() {
   if (typeof window === "undefined") {
     return [createWatchlistEntry(DEFAULT_TICKER)];
@@ -83,14 +94,28 @@ function loadStoredWatchlist() {
   }
 }
 
-export function useDashboardData(route = "overview") {
-  const [ticker, setTicker] = useState(DEFAULT_TICKER);
-  const [activeTicker, setActiveTicker] = useState(DEFAULT_TICKER);
+export function useDashboardData(route = "overview", options = {}) {
+  const initialTicker = normalizeTicker(options.initialTicker);
+  const [ticker, setTicker] = useState(initialTicker);
   const [validationError, setValidationError] = useState("");
+  const [watchlistMutationState, setWatchlistMutationState] = useState({});
   const queryClient = useQueryClient();
   const isTickerRoute = route === "ticker";
   const isWatchlistRoute = route === "watchlist";
   const isObservabilityRoute = route === "observability";
+  const activeTicker = initialTicker || normalizeTicker(ticker);
+
+  useEffect(() => {
+    if (ticker === initialTicker) {
+      return undefined;
+    }
+
+    const syncHandle = window.setTimeout(() => {
+      setTicker(initialTicker);
+    }, 0);
+
+    return () => window.clearTimeout(syncHandle);
+  }, [initialTicker, ticker]);
 
   const baseQueries = useQueries({
     queries: [
@@ -283,6 +308,13 @@ export function useDashboardData(route = "overview") {
     window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist));
   }, [watchlist]);
 
+  function updateWatchlistMutation(tickerSymbol, nextState) {
+    setWatchlistMutationState((currentState) => ({
+      ...currentState,
+      [tickerSymbol]: nextState,
+    }));
+  }
+
   const error =
     validationError ||
     (marketSummaryQuery.isError
@@ -326,7 +358,6 @@ export function useDashboardData(route = "overview") {
     }
 
     setTicker(cleanedTicker);
-    setActiveTicker(cleanedTicker);
     setValidationError("");
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.liveStock(cleanedTicker) }),
@@ -363,7 +394,7 @@ export function useDashboardData(route = "overview") {
     },
   });
 
-  function addTickerToWatchlist(nextTicker = activeTicker) {
+  async function addTickerToWatchlist(nextTicker = activeTicker) {
     const cleanedTicker = nextTicker.trim().toUpperCase();
     if (!cleanedTicker) {
       return;
@@ -374,48 +405,101 @@ export function useDashboardData(route = "overview") {
       return;
     }
 
+    const optimisticEntry = createWatchlistEntry(cleanedTicker);
+    const previousWatchlist = watchlistQuery.data;
+    updateWatchlistMutation(cleanedTicker, {
+      state: "saving",
+      message: `Adding ${cleanedTicker} to the watchlist...`,
+      updatedAt: Date.now(),
+    });
     const nextWatchlist = [...currentWatchlist, createWatchlistEntry(cleanedTicker)];
     queryClient.setQueryData(dashboardQueryKeys.watchlist, {
       ...(watchlistQuery.data || {}),
       data: nextWatchlist,
     });
-    void watchlistMutation.mutateAsync({
-      ticker: cleanedTicker,
-      price_alert_threshold: createWatchlistEntry(cleanedTicker).priceAlertThreshold,
-      volume_alert_threshold: createWatchlistEntry(cleanedTicker).volumeAlertThreshold,
-    }).catch(() => {
-      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
-    });
+
+    try {
+      await watchlistMutation.mutateAsync({
+        ticker: cleanedTicker,
+        price_alert_threshold: optimisticEntry.priceAlertThreshold,
+        volume_alert_threshold: optimisticEntry.volumeAlertThreshold,
+      });
+      updateWatchlistMutation(cleanedTicker, {
+        state: "saved",
+        message: `${cleanedTicker} was added to the watchlist.`,
+        updatedAt: Date.now(),
+      });
+    } catch (mutationError) {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, previousWatchlist);
+      updateWatchlistMutation(cleanedTicker, {
+        state: "error",
+        message: toWatchlistErrorMessage(
+          mutationError,
+          `Could not add ${cleanedTicker} to the watchlist.`,
+        ),
+        updatedAt: Date.now(),
+      });
+    }
   }
 
-  function removeTickerFromWatchlist(tickerToRemove) {
+  async function removeTickerFromWatchlist(tickerToRemove) {
     const currentWatchlist = watchlistQuery.data?.data ?? [];
     const nextWatchlist = currentWatchlist.filter((item) => item.ticker !== tickerToRemove);
     const fallbackWatchlist = nextWatchlist.length
       ? nextWatchlist
       : [createWatchlistEntry(DEFAULT_TICKER)];
+    const previousWatchlist = watchlistQuery.data;
+
+    updateWatchlistMutation(tickerToRemove, {
+      state: "removing",
+      message: `Removing ${tickerToRemove} from the watchlist...`,
+      updatedAt: Date.now(),
+    });
 
     queryClient.setQueryData(dashboardQueryKeys.watchlist, {
       ...(watchlistQuery.data || {}),
       data: fallbackWatchlist,
     });
-    void deleteWatchlistMutation.mutateAsync(tickerToRemove).catch(() => {
-      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
-    });
+
+    try {
+      await deleteWatchlistMutation.mutateAsync(tickerToRemove);
+      updateWatchlistMutation(tickerToRemove, {
+        state: "saved",
+        message: `${tickerToRemove} was removed from the watchlist.`,
+        updatedAt: Date.now(),
+      });
+    } catch (mutationError) {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, previousWatchlist);
+      updateWatchlistMutation(tickerToRemove, {
+        state: "error",
+        message: toWatchlistErrorMessage(
+          mutationError,
+          `Could not remove ${tickerToRemove} from the watchlist.`,
+        ),
+        updatedAt: Date.now(),
+      });
+    }
   }
 
-  function updateWatchlistThreshold(tickerToUpdate, fieldName, nextValue) {
+  async function updateWatchlistThreshold(tickerToUpdate, fieldName, nextValue) {
     const normalizedValue = Number(nextValue);
     if (!Number.isFinite(normalizedValue) || normalizedValue <= 0) {
       return;
     }
 
     const currentWatchlist = watchlistQuery.data?.data ?? [];
+    const previousWatchlist = watchlistQuery.data;
     const nextWatchlist = currentWatchlist.map((item) =>
       item.ticker === tickerToUpdate
         ? { ...item, [fieldName]: normalizedValue }
         : item,
     );
+    updateWatchlistMutation(tickerToUpdate, {
+      state: "saving",
+      message: `Saving ${tickerToUpdate} thresholds...`,
+      updatedAt: Date.now(),
+      field: fieldName,
+    });
     queryClient.setQueryData(dashboardQueryKeys.watchlist, {
       ...(watchlistQuery.data || {}),
       data: nextWatchlist,
@@ -435,9 +519,27 @@ export function useDashboardData(route = "overview") {
           ? normalizedValue
           : currentTickerSettings.volumeAlertThreshold || 1.5,
     };
-    void watchlistMutation.mutateAsync(nextWatchlistItem).catch(() => {
-      queryClient.setQueryData(dashboardQueryKeys.watchlist, watchlistQuery.data);
-    });
+
+    try {
+      await watchlistMutation.mutateAsync(nextWatchlistItem);
+      updateWatchlistMutation(tickerToUpdate, {
+        state: "saved",
+        message: `${tickerToUpdate} thresholds were saved.`,
+        updatedAt: Date.now(),
+        field: fieldName,
+      });
+    } catch (mutationError) {
+      queryClient.setQueryData(dashboardQueryKeys.watchlist, previousWatchlist);
+      updateWatchlistMutation(tickerToUpdate, {
+        state: "error",
+        message: toWatchlistErrorMessage(
+          mutationError,
+          `Could not update thresholds for ${tickerToUpdate}.`,
+        ),
+        updatedAt: Date.now(),
+        field: fieldName,
+      });
+    }
   }
 
   const latestTickerSummary = tickerSummary[0] || null;
@@ -571,5 +673,6 @@ export function useDashboardData(route = "overview") {
     updateWatchlistThreshold,
     watchlistAlerts,
     watchlistEntries,
+    watchlistMutationState,
   };
 }
