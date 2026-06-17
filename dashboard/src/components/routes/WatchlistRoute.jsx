@@ -15,10 +15,18 @@ export function WatchlistRoute({
   activeTicker,
   addTickerToWatchlist,
   anomalyHistory,
+  anomalySearch,
+  anomalySort,
+  anomalySortDirection,
+  focusedTicker,
+  onAnomalySearchChange,
+  onAnomalySortChange,
+  onFocusTicker,
   removeTickerFromWatchlist,
   searchTicker,
   triggeredAlerts,
   updateWatchlistThreshold,
+  watchlistMutationState,
   watchlistEntries,
 }) {
   const anomalyColumns = [
@@ -64,17 +72,23 @@ export function WatchlistRoute({
       render: (row) => formatCompactNumber(row.total_volume),
     },
   ];
+  const filteredAnomalyHistory = focusedTicker
+    ? anomalyHistory.filter((row) => row.ticker === focusedTicker)
+    : anomalyHistory;
 
   return (
     <div className="route-grid">
       <WatchlistPanel
         activeTicker={activeTicker}
+        focusedTicker={focusedTicker}
         onAddActiveTicker={() => addTickerToWatchlist(activeTicker)}
+        onFocusTicker={onFocusTicker}
+        onOpenTicker={searchTicker}
         onRemoveTicker={removeTickerFromWatchlist}
-        onSelectTicker={searchTicker}
         onUpdateThreshold={updateWatchlistThreshold}
         panelState={panelStates.watchlist}
         triggeredAlerts={triggeredAlerts}
+        watchlistMutationState={watchlistMutationState}
         watchlistEntries={watchlistEntries}
       />
 
@@ -83,19 +97,26 @@ export function WatchlistRoute({
           <div>
             <h2>Anomaly history</h2>
             <p className="panel-subtitle">
-              Virtualized anomaly log with sorting, filtering, and column controls.
+              {focusedTicker
+                ? `Virtualized anomaly log for ${focusedTicker} with sortable, shareable filters.`
+                : "Virtualized anomaly log with sorting, filtering, and column controls."}
             </p>
           </div>
         </div>
         <PanelStatus state={panelStates.anomalies} compact />
         <DataTable
-          rows={anomalyHistory}
+          rows={filteredAnomalyHistory}
           columns={anomalyColumns}
           searchPlaceholder="Filter anomaly history"
           emptyMessage="No anomaly history is available yet."
           rowKey={(row) => `${row.ticker}-${row.trade_date}-${row.anomaly_flag}`}
           initialSortKey="trade_date"
           height={440}
+          searchTerm={anomalySearch}
+          sortDirection={anomalySortDirection}
+          sortKey={anomalySort}
+          onSearchTermChange={onAnomalySearchChange}
+          onSortChange={onAnomalySortChange}
         />
       </section>
     </div>
