@@ -15,11 +15,19 @@ export function DataTable({
   initialSortDirection = "desc",
   height = 420,
   rowHeight = 52,
+  searchTerm: controlledSearchTerm,
+  sortKey: controlledSortKey,
+  sortDirection: controlledSortDirection,
+  onSearchTermChange,
+  onSortChange,
 }) {
-  const [searchTerm, setSearchTerm] = useState("");
+  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const searchTerm = controlledSearchTerm ?? localSearchTerm;
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  const [sortKey, setSortKey] = useState(initialSortKey || columns[0]?.key);
-  const [sortDirection, setSortDirection] = useState(initialSortDirection);
+  const [localSortKey, setLocalSortKey] = useState(initialSortKey || columns[0]?.key);
+  const [localSortDirection, setLocalSortDirection] = useState(initialSortDirection);
+  const sortKey = controlledSortKey ?? localSortKey;
+  const sortDirection = controlledSortDirection ?? localSortDirection;
   const [visibleColumnKeys, setVisibleColumnKeys] = useState(
     columns.map((column) => column.key),
   );
@@ -72,13 +80,23 @@ export function DataTable({
   const topSpacerHeight = startIndex * rowHeight;
 
   function toggleSort(nextKey) {
+    let nextDirection = "desc";
     if (nextKey === sortKey) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      nextDirection = sortDirection === "asc" ? "desc" : "asc";
+      if (controlledSortDirection === undefined) {
+        setLocalSortDirection(nextDirection);
+      }
+      onSortChange?.(nextKey, nextDirection);
       return;
     }
 
-    setSortKey(nextKey);
-    setSortDirection("desc");
+    if (controlledSortKey === undefined) {
+      setLocalSortKey(nextKey);
+    }
+    if (controlledSortDirection === undefined) {
+      setLocalSortDirection(nextDirection);
+    }
+    onSortChange?.(nextKey, nextDirection);
   }
 
   function toggleColumn(columnKey) {
@@ -99,7 +117,13 @@ export function DataTable({
       <div className="data-table-toolbar">
         <input
           value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            if (controlledSearchTerm === undefined) {
+              setLocalSearchTerm(nextValue);
+            }
+            onSearchTermChange?.(nextValue);
+          }}
           placeholder={searchPlaceholder}
         />
 
