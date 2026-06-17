@@ -2,6 +2,7 @@ import {
   formatCompactNumber,
   formatCurrency,
   formatPercent,
+  formatRelativeTime,
   formatRatio,
   getAnomalyLabel,
   getPriceChangeClass,
@@ -10,14 +11,23 @@ import { PanelStatus } from "./PanelStatus";
 
 export function WatchlistPanel({
   activeTicker,
+  focusedTicker,
   onAddActiveTicker,
+  onFocusTicker,
+  onOpenTicker,
   onRemoveTicker,
-  onSelectTicker,
   onUpdateThreshold,
   panelState,
   triggeredAlerts,
+  watchlistMutationState,
   watchlistEntries,
 }) {
+  const activeMutation = watchlistMutationState?.[activeTicker];
+  const addButtonLabel =
+    activeMutation?.state === "saving"
+      ? `Adding ${activeTicker}...`
+      : `Add ${activeTicker}`;
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -27,8 +37,12 @@ export function WatchlistPanel({
             Track symbols with price-change and volume-spike thresholds.
           </p>
         </div>
-        <button className="secondary-button" onClick={onAddActiveTicker}>
-          Add {activeTicker}
+        <button
+          className="secondary-button"
+          onClick={onAddActiveTicker}
+          disabled={activeMutation?.state === "saving"}
+        >
+          {addButtonLabel}
         </button>
       </div>
       <PanelStatus state={panelState} compact />
@@ -45,9 +59,18 @@ export function WatchlistPanel({
         {watchlistEntries.length ? (
           watchlistEntries.map((entry) => (
             <div className="watchlist-row" key={entry.ticker}>
+              {watchlistMutationState?.[entry.ticker] ? (
+                <div
+                  className={`watchlist-sync watchlist-sync-${watchlistMutationState[entry.ticker].state}`}
+                >
+                  <span>{watchlistMutationState[entry.ticker].message}</span>
+                  <span>{formatRelativeTime(watchlistMutationState[entry.ticker].updatedAt)}</span>
+                </div>
+              ) : null}
+
               <button
-                className={`watchlist-symbol ${entry.ticker === activeTicker ? "active" : ""}`}
-                onClick={() => onSelectTicker(entry.ticker)}
+                className={`watchlist-symbol ${entry.ticker === (focusedTicker || activeTicker) ? "active" : ""}`}
+                onClick={() => onFocusTicker(entry.ticker)}
               >
                 <div>
                   <strong>{entry.ticker}</strong>
@@ -89,6 +112,7 @@ export function WatchlistPanel({
                     min="0.1"
                     step="0.1"
                     value={entry.priceAlertThreshold}
+                    disabled={watchlistMutationState?.[entry.ticker]?.state === "removing"}
                     onChange={(event) =>
                       onUpdateThreshold(entry.ticker, "priceAlertThreshold", event.target.value)
                     }
@@ -101,16 +125,27 @@ export function WatchlistPanel({
                     min="1"
                     step="0.1"
                     value={entry.volumeAlertThreshold}
+                    disabled={watchlistMutationState?.[entry.ticker]?.state === "removing"}
                     onChange={(event) =>
                       onUpdateThreshold(entry.ticker, "volumeAlertThreshold", event.target.value)
                     }
                   />
                 </label>
                 <button
+                  className="secondary-button"
+                  onClick={() => onOpenTicker(entry.ticker)}
+                  disabled={watchlistMutationState?.[entry.ticker]?.state === "removing"}
+                >
+                  Open ticker
+                </button>
+                <button
                   className="secondary-button watchlist-remove"
                   onClick={() => onRemoveTicker(entry.ticker)}
+                  disabled={watchlistMutationState?.[entry.ticker]?.state === "removing"}
                 >
-                  Remove
+                  {watchlistMutationState?.[entry.ticker]?.state === "removing"
+                    ? "Removing..."
+                    : "Remove"}
                 </button>
               </div>
 
