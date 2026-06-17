@@ -91,13 +91,29 @@ export function buildAnomalyFeed(rows) {
 }
 
 export function buildTickerTrend(rows) {
-  return [...rows]
+  const orderedRows = [...rows]
     .map((row) => ({
+      rawDate: new Date(row.trade_date).getTime(),
       tradeDate: shortDate(row.trade_date),
       avgPrice: Number(row.avg_price || 0),
       closePrice: Number(row.close_price || row.avg_price || 0),
+      benchmarkClosePrice: Number(row.benchmark_close_price || 0),
+      benchmarkTicker: row.benchmark_ticker || "",
+      benchmarkName: row.benchmark_name || "",
     }))
     .reverse();
+  const baseClosePrice = orderedRows[0]?.closePrice || 0;
+  const baseBenchmarkPrice = orderedRows.find((row) => row.benchmarkClosePrice > 0)?.benchmarkClosePrice || 0;
+
+  return orderedRows.map((row) => ({
+    ...row,
+    indexedClosePrice:
+      baseClosePrice > 0 ? Number(((row.closePrice / baseClosePrice) * 100).toFixed(2)) : null,
+    indexedBenchmarkClosePrice:
+      row.benchmarkClosePrice > 0 && baseBenchmarkPrice > 0
+        ? Number(((row.benchmarkClosePrice / baseBenchmarkPrice) * 100).toFixed(2))
+        : null,
+  }));
 }
 
 export function createWatchlistEntry(ticker) {
@@ -217,6 +233,10 @@ export function formatRelativeTime(value) {
 }
 
 export function formatTooltipValue(key, value) {
+  if (key?.toLowerCase().includes("indexed")) {
+    return Number(value || 0).toFixed(2);
+  }
+
   if (key?.toLowerCase().includes("price")) {
     return formatCurrency(value);
   }
