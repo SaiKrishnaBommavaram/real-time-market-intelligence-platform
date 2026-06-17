@@ -1,7 +1,11 @@
+import { useMemo } from "react";
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
+  Brush,
+  Legend,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,10 +23,24 @@ import {
   formatTimestamp,
 } from "../utils/dashboard";
 
+const CHART_WINDOWS = {
+  "1m": 22,
+  "3m": 66,
+  "6m": 132,
+  max: Infinity,
+};
+
 export function TickerWorkspace({
   activeTicker,
+  chartCompare,
+  chartView,
+  chartWindow,
+  intradayCandles,
   latestTickerSummary,
   liveStock,
+  onChartCompareChange,
+  onChartViewChange,
+  onChartWindowChange,
   onSearch,
   panelState,
   quickTickers,
@@ -32,6 +50,22 @@ export function TickerWorkspace({
   tickerSummary,
   tickerTrend,
 }) {
+  const visibleTrend = useMemo(() => {
+    const visibleCount = CHART_WINDOWS[chartWindow] || CHART_WINDOWS["3m"];
+    if (!tickerTrend.length || visibleCount === Infinity) {
+      return tickerTrend;
+    }
+
+    return tickerTrend.slice(-visibleCount);
+  }, [chartWindow, tickerTrend]);
+  const benchmarkLabel = tickerTrend.find((row) => row.benchmarkTicker)?.benchmarkTicker || "benchmark";
+  const chartValueKey =
+    chartView === "indexed" ? "indexedClosePrice" : "closePrice";
+  const benchmarkValueKey =
+    chartView === "indexed"
+      ? "indexedBenchmarkClosePrice"
+      : "benchmarkClosePrice";
+
   return (
     <>
       <section className="panel search-panel">
@@ -132,10 +166,56 @@ export function TickerWorkspace({
             />
           </div>
 
+          <div className="chart-controls">
+            <div className="chart-control-group">
+              <span>Window</span>
+              {Object.keys(CHART_WINDOWS).map((windowKey) => (
+                <button
+                  key={windowKey}
+                  className={`ticker-chip ${chartWindow === windowKey ? "active" : ""}`}
+                  onClick={() => onChartWindowChange(windowKey)}
+                >
+                  {windowKey.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <div className="chart-control-group">
+              <span>View</span>
+              <button
+                className={`ticker-chip ${chartView === "price" ? "active" : ""}`}
+                onClick={() => onChartViewChange("price")}
+              >
+                Price
+              </button>
+              <button
+                className={`ticker-chip ${chartView === "indexed" ? "active" : ""}`}
+                onClick={() => onChartViewChange("indexed")}
+              >
+                Indexed
+              </button>
+            </div>
+            <div className="chart-control-group">
+              <span>Compare</span>
+              <button
+                className={`ticker-chip ${chartCompare === "none" ? "active" : ""}`}
+                onClick={() => onChartCompareChange("none")}
+              >
+                Solo
+              </button>
+              <button
+                className={`ticker-chip ${chartCompare === "benchmark" ? "active" : ""}`}
+                onClick={() => onChartCompareChange("benchmark")}
+                disabled={!tickerTrend.some((row) => row.benchmarkClosePrice > 0)}
+              >
+                {benchmarkLabel}
+              </button>
+            </div>
+          </div>
+
           <div className="chart-wrap ticker-chart">
-            {tickerTrend.length ? (
+            {visibleTrend.length ? (
               <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={tickerTrend}>
+                <ComposedChart data={visibleTrend}>
                   <defs>
                     <linearGradient id="tickerPrice" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#22c55e" stopOpacity={0.35} />
@@ -144,22 +224,69 @@ export function TickerWorkspace({
                   </defs>
                   <CartesianGrid stroke="#223046" vertical={false} />
                   <XAxis dataKey="tradeDate" tick={{ fill: "#94a3b8", fontSize: 12 }} />
-                  <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} />
-                  <Tooltip content={<ChartTooltip currency />} />
+                  <YAxis
+                    tick={{ fill: "#94a3b8", fontSize: 12 }}
+                    tickFormatter={(value) =>
+                      chartView === "indexed" ? `${Number(value || 0).toFixed(0)}` : formatCurrency(value)
+                    }
+                  />
+                  <Tooltip
+                    content={<ChartTooltip currency={chartView !== "indexed"} />}
+                    cursor={{ stroke: "#38bdf8", strokeDasharray: "4 4" }}
+                  />
+                  <Legend />
                   <Area
                     type="monotone"
-                    dataKey="closePrice"
+                    dataKey={chartValueKey}
+                    name={chartView === "indexed" ? `${activeTicker} indexed` : activeTicker}
                     stroke="#22c55e"
                     fill="url(#tickerPrice)"
                     strokeWidth={2}
                   />
-                </AreaChart>
+                  {chartCompare === "benchmark" ? (
+                    <Line
+                      type="monotone"
+                      dataKey={benchmarkValueKey}
+                      name={
+                        chartView === "indexed"
+                          ? `${benchmarkLabel} indexed`
+                          : benchmarkLabel
+                      }
+                      stroke="#38bdf8"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  ) : null}
+                  <Brush
+                    dataKey="tradeDate"
+                    height={24}
+                    stroke="#2563eb"
+                    travellerWidth={8}
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             ) : (
               <div className="empty chart-empty">
                 No warehouse history is available for {activeTicker}.
               </div>
             )}
+          </div>
+
+          <div className="ticker-context-grid">
+            <div className="context-card">
+              <span>Benchmark</span>
+              <strong>{latestTickerSummary?.benchmark_ticker || "Unavailable"}</strong>
+              <p>{latestTickerSummary?.benchmark_name || "No benchmark mapping returned yet."}</p>
+            </div>
+            <div className="context-card">
+              <span>Chart source</span>
+              <strong>{intradayCandles.length ? "Daily + intraday context" : "Daily summaries"}</strong>
+              <p>
+                {intradayCandles[0]?.last_updated_at
+                  ? `Latest intraday candle ${formatTimestamp(intradayCandles[0].last_updated_at)}`
+                  : "Intraday candles are unavailable for this symbol right now."}
+              </p>
+            </div>
           </div>
         </div>
 
